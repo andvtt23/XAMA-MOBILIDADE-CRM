@@ -1,0 +1,443 @@
+.xama-dashboard {
+  display: grid;
+  gap: 14px;
+  color: #123d36;
+}
+
+.xama-dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-radius: 18px;
+  padding: 18px 22px;
+  background: linear-gradient(110deg, #075247, #073d35);
+  color: #fff;
+}
+
+.xama-dashboard-kicker {
+  color: #c5e0d7;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+}
+
+.xama-dashboard-header h2 {
+  margin: 4px 0;
+  font-size: 21px;
+}
+
+.xama-dashboard-header p {
+  margin: 0;
+  color: #d4e7e0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.xama-summary-period {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+
+.xama-summary-period label,
+.xama-date-control label {
+  display: grid;
+  gap: 4px;
+  color: #d4e7e0;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.xama-summary-period input,
+.xama-date-control input {
+  min-height: 34px;
+  border: 1px solid #d9e3de;
+  border-radius: 7px;
+  padding: 5px 7px;
+  background: #fff;
+  color: #24483f;
+  font: inherit;
+}
+
+.xama-summary-period > span {
+  padding-bottom: 8px;
+  color: #d4e7e0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.xama-driver-list {
+  display: grid;
+  gap: 12px;
+}
+
+.xama-driver-card {
+  display: grid;
+  grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  border: 1px solid #e5ebe8;
+  border-radius: 18px;
+  padding: 13px;
+  background: #fff;
+  box-shadow: 0 2px 12px rgb(18 61 54 / 5%);
+}
+
+.xama-driver-name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 14px;
+  padding: 14px;
+  background: #dff1eb;
+}
+
+.xama-driver-name > span {
+  color: #27816b;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.xama-driver-name > input {
+  min-height: 34px;
+  border: 1px solid transparent;
+  padding: 2px 4px;
+  background: transparent;
+  color: #143d36;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.xama-driver-name > input:focus {
+  border-color: #9dcdbd;
+  background: #fff;
+}
+
+.xama-driver-name details {
+  color: #526a61;
+  font-size: 11px;
+}
+
+.xama-driver-name details summary {
+  cursor: pointer;
+  color: #08765e;
+}
+
+.xama-driver-name details label,
+.xama-driver-settings label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: #68736e;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.xama-driver-name details label {
+  margin-top: 8px;
+}
+
+.xama-file-button {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid #b9ded1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #e3f3ed;
+  color: #08765e;
+  font-size: 9px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.xama-driver-import-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.xama-driver-import-actions .xama-file-button {
+  flex: 1;
+}
+
+.xama-clear-import {
+  flex: 0 0 auto;
+  cursor: pointer;
+  border: 1px solid #e2c7c0;
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: #fff7f5;
+  color: #8d3c2c;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.xama-clear-import:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.xama-file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.xama-file-button:has(input:disabled) {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.xama-import-status {
+  color: #08765e;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.xama-import-candidate {
+  display: grid;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.xama-import-candidate p,
+.xama-import-candidate small {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.xama-import-candidate small {
+  color: #68736e;
+  font-size: 10px;
+}
+
+.xama-driver-data {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+
+.xama-date-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.xama-date-control label {
+  color: #68736e;
+}
+
+.xama-metrics {
+  display: grid;
+  grid-template-columns: 0.65fr 1.15fr 1fr;
+  gap: 12px;
+  border-bottom: 1px solid #e8ece9;
+  padding-bottom: 9px;
+}
+
+.xama-metrics > div,
+.xama-summary-grid > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.xama-metrics small {
+  color: #626b68;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.xama-metrics strong {
+  overflow-wrap: anywhere;
+  color: #143d36;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.xama-metrics .commission-metric small {
+  color: #27866e;
+}
+
+.xama-net-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.xama-net-row span {
+  color: #626b68;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.xama-net-row strong {
+  min-width: 160px;
+  border-radius: 10px;
+  padding: 7px 12px;
+  background: #078363;
+  color: #fff;
+  font-size: 17px;
+  text-align: right;
+}
+
+.xama-driver-settings {
+  display: grid;
+  grid-template-columns: minmax(135px, 1fr) minmax(90px, 0.6fr) minmax(180px, 1.3fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.xama-driver-settings input,
+.xama-driver-settings select,
+.xama-driver-name details input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid #d9e3de;
+  border-radius: 7px;
+  padding: 5px 7px;
+  background: #fff;
+  color: #24483f;
+  font: inherit;
+  font-size: 11px;
+}
+
+.xama-driver-settings input:disabled {
+  background: #f3f6f4;
+  color: #63776e;
+}
+
+.xama-date-control input:disabled {
+  background: #f3f6f4;
+  color: #63776e;
+}
+
+.crm .xama-driver-settings .xama-delete {
+  min-height: 34px;
+  border: 0;
+  padding: 6px 8px;
+  background: transparent;
+  box-shadow: none;
+  color: #a14b43;
+  font-size: 10px;
+}
+
+.crm .xama-driver-settings .xama-delete:hover {
+  transform: none;
+  background: #fff0ee;
+  box-shadow: none;
+}
+
+.xama-summary {
+  border-radius: 18px;
+  padding: 18px 22px;
+  background: linear-gradient(110deg, #075247, #073d35);
+  color: #fff;
+}
+
+.xama-import-preview {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #d9e3de;
+  border-radius: 10px;
+  padding: 10px;
+  background: #f7faf8;
+  color: #34564d;
+  font-size: 11px;
+}
+
+.xama-import-preview p {
+  margin: 3px 0;
+}
+
+.xama-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.crm .xama-preview-actions button {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 10px;
+}
+
+.crm .xama-preview-actions .xama-cancel-preview {
+  border-color: #d9e3de;
+  background: #fff;
+  box-shadow: none;
+  color: #24483f;
+}
+
+.xama-summary h3 {
+  margin: 0 0 15px;
+  font-size: 14px;
+}
+
+.xama-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.xama-summary-grid small {
+  color: #d0e4dd;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.xama-summary-grid strong {
+  overflow-wrap: anywhere;
+  font-size: 19px;
+}
+
+@media (max-width: 760px) {
+  .xama-driver-card {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .xama-driver-name {
+    padding: 11px 13px;
+  }
+
+  .xama-driver-name > input {
+    font-size: 17px;
+  }
+
+  .xama-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .xama-metrics strong {
+    font-size: 14px;
+  }
+
+  .xama-net-row strong {
+    min-width: 0;
+    font-size: 15px;
+  }
+
+  .xama-driver-settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .xama-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
