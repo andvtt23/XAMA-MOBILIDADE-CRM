@@ -3,18 +3,17 @@ import test from "node:test";
 import { createAIAnalyzer, getAIConfiguration } from "./aiAnalysis.js";
 
 const apiEnv = {
-  GEMINI_API_KEY: "test-key",
-  GEMINI_MODEL: "gemini-3.8-flash",
-  GEMINI_API_MODE: "interactions",
+  GROQ_API_KEY: "test-key",
+  GROQ_MODEL: "openai/gpt-oss-20b",
 };
 
-function geminiResponse(result, status = 200) {
+function groqResponse(result, status = 200) {
   return new Response(JSON.stringify({
-    id: "test-interaction",
-    status: "completed",
-    steps: [{
-      type: "model_output",
-      content: [{ type: "text", text: JSON.stringify(result) }],
+    id: "test-completion",
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: JSON.stringify(result) },
+      finish_reason: "stop",
     }],
   }), {
     status,
@@ -22,39 +21,53 @@ function geminiResponse(result, status = 200) {
   });
 }
 
-test("configuration requires the Gemini API key and configured model", () => {
+const emptyResult = { rides: [], unresolved: [], unclassified: [] };
+
+function sampleMessage(overrides = {}) {
+  return {
+    index: 0,
+    date: "2026-10-25",
+    time: "09:00",
+    sender: "Ana Souza",
+    body: "Passageiro João Silva, pegar na Rua das Flores, 123, telefone 11 98765-4321; R$ 18,00",
+    ...overrides,
+  };
+}
+
+test("configuration requires the Groq API key and uses the default model", () => {
   const missing = getAIConfiguration({});
-  assert.deepEqual(missing.missing, ["GEMINI_API_KEY", "GEMINI_MODEL"]);
-  assert.equal(missing.model, "");
+  assert.deepEqual(missing.missing, ["GROQ_API_KEY"]);
+  assert.equal(missing.model, "openai/gpt-oss-20b");
+
   const configured = getAIConfiguration(apiEnv);
   assert.deepEqual(configured.missing, []);
-  assert.equal(configured.model, "gemini-3.8-flash");
-  assert.equal(configured.apiMode, "interactions");
-  assert.equal(getAIConfiguration({
-    GEMINI_API_KEY: "test-key",
-    GEMINI_MODEL: "gemini-3.8-flash",
-  }).apiMode, "generateContent");
+  assert.equal(configured.model, "openai/gpt-oss-20b");
+  assert.equal(configured.apiKey, "test-key");
 });
 
-test("an unconfigured Gemini key reports requirements and cannot analyze", async () => {
+test("an unconfigured Groq key reports requirements and cannot analyze", async () => {
   const analyzer = createAIAnalyzer({});
   assert.equal(analyzer.status().ready, false);
-  assert.deepEqual(analyzer.status().missing, ["GEMINI_API_KEY", "GEMINI_MODEL"]);
+  assert.deepEqual(analyzer.status().missing, ["GROQ_API_KEY"]);
+  assert.equal(analyzer.status().provider, "Groq API");
+
   await assert.rejects(analyzer.analyze({
     driverName: "Ana",
     messages: [],
   }), error => error.code === "AI_NOT_CONFIGURED");
 });
 
-test("official Gemini API receives only minimized messages and structured output config", async () => {
+test("Groq receives minimized messages and requests JSON output", async () => {
   let requestUrl;
   let requestPayload;
-  let apiKeyHeader;
+  let authorization;
+
   const analyzer = createAIAnalyzer(apiEnv, async (url, options) => {
     requestUrl = String(url);
-    apiKeyHeader = new Headers(options.headers).get("x-goog-api-key");
+    authorization = new Headers(options.headers).get("authorization");
     requestPayload = JSON.parse(options.body);
-    return geminiResponse({
+
+    return groqResponse({
       rides: [{
         anchorIndex: 0,
         messageIndices: [0],
@@ -71,151 +84,115 @@ test("official Gemini API receives only minimized messages and structured output
       unclassified: [],
     });
   });
+
   const result = await analyzer.analyze({
     driverName: "Ana Souza",
     periodStart: "2026-10-25",
     periodEnd: "2026-10-31",
-    messages: [{
-      index: 0,
-      date: "2026-10-25",
-      time: "09:00",
-      sender: "Ana Souza",
-      body: "Passageiro João Silva, pegar na Rua das Flores, 123, telefone 11 98765-4321; R$ 18,00",
-    }],
+    messages: [sampleMessage()],
   });
+
   const serializedRequest = JSON.stringify(requestPayload);
 
-  assert.equal(requestUrl, "https://generativelanguage.googleapis.com/v1beta/interactions");
-  assert.equal(apiKeyHeader, "test-key");
-  assert.equal(requestPayload.model, "gemini-3.8-flash");
-  assert.equal(requestPayload.store, false);
-  assert.equal(requestPayload.generation_config.thinking_level, "low");
-  assert.equal(requestPayload.response_format.mime_type, "application/json");
-  assert.equal(requestPayload.response_format.schema.type, "object");
-  assert.match(serializedRequest, /R\$ 18,00/);
+  assert.equal(requestUrl, "https://api.groq.com/openai/v1/chat/completions");
+  assert.equal(authorization, "Bearer test-key");
+  assert.equal(requestPayload.model, "openai/gpt-oss-20b");
+  assert.deepEqual(requestPayload.response_format, { type: "json_object" });
+  assert.equal(requestPayload.messages[0].role, "system");
+  assert.equal(requestPayload.messages[1].role, "user");
+  assert.match(serializedRequest, /mensagensAnonimizadas/);
   assert.doesNotMatch(serializedRequest, /Ana Souza|João Silva|Rua das Flores|98765-4321/);
   assert.equal(result.rides[0].amountCents, 1800);
   assert.equal(result.summary.confirmedRevenueCents, 1800);
+  assert.equal(result.provider, "Groq API");
 });
 
-test("generateContent mode uses the configured model and maps JSON output into CRM format", async () => {
-  let requestUrl;
-  let requestBody;
+test("Groq JSON completion is mapped into the CRM result format", async () => {
   const expected = {
     rides: [],
     unresolved: [],
-    unclassified: [{ messageIndices: [0], reason: "Sem evidência operacional de corrida." }],
+    unclassified: [{
+      messageIndices: [0],
+      reason: "Sem evidência operacional de corrida.",
+    }],
   };
-  const analyzer = createAIAnalyzer(
-    { ...apiEnv, GEMINI_API_MODE: "generateContent" },
-    async (url, options) => {
-      requestUrl = String(url);
-      requestBody = JSON.parse(options.body);
-      assert.equal(new Headers(options.headers).get("x-goog-api-key"), "test-key");
-      return new Response(JSON.stringify({
-        candidates: [{
-          content: {
-            role: "model",
-            parts: [{ text: JSON.stringify(expected) }],
-          },
-          finishReason: "STOP",
-        }],
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-    },
-  );
+
+  const analyzer = createAIAnalyzer(apiEnv, async () => groqResponse(expected));
+
   const result = await analyzer.analyze({
     driverName: "Ana Souza",
-    messages: [{
-      index: 0,
-      date: "2026-10-25",
-      time: "09:00",
-      sender: "Ana Souza",
+    messages: [sampleMessage({
       body: "João Silva, telefone 11 98765-4321, apenas consultando horário",
-    }],
+    })],
   });
 
-  assert.equal(
-    requestUrl,
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
-  );
-  assert.deepEqual(requestBody.generationConfig.responseMimeType, "application/json");
-  assert.equal(requestBody.generationConfig.responseSchema.type, "OBJECT");
-  assert.equal(requestBody.generationConfig.thinkingConfig.thinkingLevel, "LOW");
-  assert.doesNotMatch(JSON.stringify(requestBody), /Ana Souza|João Silva|98765-4321/);
-  assert.deepEqual(result.unclassified, [{
-    ...expected.unclassified[0],
-    messageIndices: [0],
-  }]);
-  assert.equal(result.provider, "Google Gemini generateContent");
+  assert.deepEqual(result.unclassified, expected.unclassified);
+  assert.equal(result.provider, "Groq API");
+  assert.equal(result.model, "openai/gpt-oss-20b");
 });
 
-test("Gemini extracts JSON text from the model_output step", async () => {
-  const expected = { rides: [], unresolved: [], unclassified: [] };
-  const analyzer = createAIAnalyzer(apiEnv, async () => new Response(JSON.stringify({
-    id: "interaction-with-steps",
-    status: "completed",
-    steps: [
-      { type: "user_input", content: [{ type: "text", text: "prompt" }] },
-      { type: "model_thought", summary: "internal step" },
-      { type: "model_output", content: [{ type: "text", text: JSON.stringify(expected) }] },
-    ],
-  }), { status: 200, headers: { "Content-Type": "application/json" } }));
-  const result = await analyzer.analyze({
-    driverName: "Ana",
-    messages: [{
-      index: 0,
-      date: "2026-10-25",
-      time: "09:00",
-      sender: "Central",
-      body: "Texto para análise",
-    }],
-  });
-
-  assert.deepEqual(result.rides, []);
-  assert.equal(result.summary.messagesAnalyzed, 1);
-});
-
-test("completed Gemini response without model_output text fails without inventing results", async () => {
-  const analyzer = createAIAnalyzer(apiEnv, async () => new Response(JSON.stringify({
-    id: "empty-interaction",
-    status: "completed",
-    steps: [{ type: "model_thought", summary: "No output step" }],
-  }), { status: 200, headers: { "Content-Type": "application/json" } }));
+test("empty Groq response fails without inventing results", async () => {
+  const analyzer = createAIAnalyzer(apiEnv, async () => new Response(
+    JSON.stringify({
+      id: "empty-completion",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: "" },
+        finish_reason: "stop",
+      }],
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  ));
 
   await assert.rejects(analyzer.analyze({
     driverName: "Ana",
-    messages: [{
-      index: 0,
-      date: "2026-10-25",
-      time: "09:00",
-      sender: "Central",
-      body: "Texto para análise",
-    }],
+    messages: [sampleMessage({ body: "Texto para análise" })],
   }), error => (
-    error.code === "GEMINI_INVALID_RESPONSE"
+    error.code === "GROQ_INVALID_RESPONSE"
     && error.statusCode === 502
-    && error.message.includes("Resposta vazia")
   ));
 });
 
 test("messages outside the period are sent only as non-classifiable boundary context", async () => {
   let requestPayload;
+
   const analyzer = createAIAnalyzer(apiEnv, async (_url, options) => {
     requestPayload = JSON.parse(options.body);
-    return geminiResponse({ rides: [], unresolved: [], unclassified: [] });
+    return groqResponse(emptyResult);
   });
+
   const result = await analyzer.analyze({
     driverName: "Motorista",
     periodStart: "2026-10-25",
     periodEnd: "2026-10-25",
     messages: [
-      { index: 0, date: "2026-10-24", time: "23:59", sender: "Motorista", body: "Corrida anterior" },
-      { index: 1, date: "2026-10-25", time: "00:01", sender: "Central", body: "Corrida 18 reais" },
-      { index: 2, date: "2026-10-26", time: "00:01", sender: "Motorista", body: "Livre" },
+      sampleMessage({
+        index: 0,
+        date: "2026-10-24",
+        time: "23:59",
+        sender: "Motorista",
+        body: "Corrida anterior",
+      }),
+      sampleMessage({
+        index: 1,
+        date: "2026-10-25",
+        time: "00:01",
+        sender: "Central",
+        body: "Corrida 18 reais",
+      }),
+      sampleMessage({
+        index: 2,
+        date: "2026-10-26",
+        time: "00:01",
+        sender: "Motorista",
+        body: "Livre",
+      }),
     ],
   });
-  const prompt = requestPayload.input;
-  const sentMessages = JSON.parse(prompt).mensagensAnonimizadas;
+
+  const sentMessages = JSON.parse(
+    requestPayload.messages[1].content,
+  ).mensagensAnonimizadas;
 
   assert.equal(sentMessages.length, 3);
   assert.equal(sentMessages[0].contextOnly, true);
@@ -226,19 +203,18 @@ test("messages outside the period are sent only as non-classifiable boundary con
   assert.equal(result.unresolved[0].anchorIndex, 1);
 });
 
-test("messages omitted by Gemini are returned for human review", async () => {
-  const analyzer = createAIAnalyzer(apiEnv, async () => (
-    geminiResponse({ rides: [], unresolved: [], unclassified: [] })
-  ));
+test("messages omitted by Groq are returned for human review", async () => {
+  const analyzer = createAIAnalyzer(apiEnv, async () => groqResponse(emptyResult));
+
   const result = await analyzer.analyze({
     driverName: "Ana",
-    messages: [{
-      index: 4,
-      date: "2026-10-25",
-      time: "09:00",
-      sender: "Central",
-      body: "Texto não classificado",
-    }],
+    messages: [
+      sampleMessage({
+        index: 4,
+        sender: "Central",
+        body: "Texto não classificado",
+      }),
+    ],
   });
 
   assert.equal(result.unresolved.length, 1);
@@ -246,90 +222,85 @@ test("messages omitted by Gemini are returned for human review", async () => {
   assert.match(result.unresolved[0].reason, /não classificou esta mensagem/);
 });
 
-test("Gemini authentication failures stay explicit without exposing credentials", async () => {
+test("Groq authentication failures stay explicit without exposing credentials", async () => {
   const analyzer = createAIAnalyzer(apiEnv, async () => new Response(
-    JSON.stringify({ error: { message: "Invalid API key test-key" } }),
+    JSON.stringify({
+      error: { message: "Invalid API key test-key" },
+    }),
     { status: 401, headers: { "Content-Type": "application/json" } },
   ));
 
   await assert.rejects(analyzer.analyze({
     driverName: "Ana",
-    messages: [{
-      index: 0,
-      date: "2026-10-25",
-      time: "09:00",
-      sender: "Central",
-      body: "Corrida 18 reais",
-    }],
+    messages: [sampleMessage({ body: "Corrida 18 reais" })],
   }), error => (
-    error.code === "GEMINI_AUTH_ERROR"
-    && error.message.includes("GEMINI_API_KEY")
+    error.code === "GROQ_AUTH_ERROR"
+    && error.message.includes("GROQ_API_KEY")
     && !error.message.includes("test-key")
   ));
 });
 
-test("Gemini retries HTTP 503 with progressive delays using only the configured model", async () => {
+test("Groq retries HTTP 503 with progressive delays using only the configured model", async () => {
   let attempts = 0;
   const delays = [];
+
   const analyzer = createAIAnalyzer(
     apiEnv,
     async (_url, options) => {
       attempts += 1;
-      assert.equal(JSON.parse(options.body).model, "gemini-3.8-flash");
+      assert.equal(JSON.parse(options.body).model, "openai/gpt-oss-20b");
+
       if (attempts < 3) {
-        return new Response(JSON.stringify({
-          error: { message: "temporarily unavailable" },
-        }), { status: 503 });
+        return new Response(
+          JSON.stringify({ error: { message: "temporarily unavailable" } }),
+          { status: 503 },
+        );
       }
-      return geminiResponse({ rides: [], unresolved: [], unclassified: [] });
+
+      return groqResponse(emptyResult);
     },
     {
       retryDelaysMs: [1000, 2000],
       sleep: async delay => delays.push(delay),
     },
   );
+
   const result = await analyzer.analyze({
     driverName: "Ana",
-    messages: [{
-      index: 0,
-      date: "2026-10-25",
-      time: "09:00",
-      sender: "Central",
-      body: "Texto para análise",
-    }],
+    messages: [sampleMessage({ body: "Texto para análise" })],
   });
 
   assert.equal(attempts, 3);
   assert.deepEqual(delays, [1000, 2000]);
-  assert.equal(result.model, "gemini-3.8-flash");
+  assert.equal(result.model, "openai/gpt-oss-20b");
 });
 
-test("Gemini reports the final HTTP 503 after bounded retries", async () => {
+test("Groq reports the final HTTP 503 after bounded retries", async () => {
   let attempts = 0;
+
   const analyzer = createAIAnalyzer(
     apiEnv,
     async () => {
       attempts += 1;
-      return new Response(JSON.stringify({
-        error: { message: "service overloaded" },
-      }), { status: 503 });
+      return new Response(
+        JSON.stringify({ error: { message: "service overloaded" } }),
+        { status: 503 },
+      );
     },
-    { retryDelaysMs: [1, 2], sleep: async () => {} },
+    {
+      retryDelaysMs: [1, 2],
+      sleep: async () => {},
+    },
   );
 
   await assert.rejects(analyzer.analyze({
     driverName: "Ana",
-    messages: [{
-      index: 0,
-      date: "2026-10-25",
-      time: "09:00",
-      sender: "Central",
-      body: "Texto para análise",
-    }],
+    messages: [sampleMessage({ body: "Texto para análise" })],
   }), error => (
     error.statusCode === 503
-    && error.code === "GEMINI_PROVIDER_ERROR"
+    && error.code === "GROQ_PROVIDER_ERROR"
     && error.message.includes("service overloaded")
   ));
+
   assert.equal(attempts, 3);
 });

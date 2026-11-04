@@ -105,22 +105,12 @@ loadEnvFile(".env");
 loadEnvFile(".env.local");
 
 export function getAIConfiguration(env = process.env) {
-  const apiKey = String(env.GEMINI_API_KEY ?? "").trim();
-  const model = String(env.GEMINI_MODEL ?? "").trim();
-  const apiMode = String(env.GEMINI_API_MODE ?? "generateContent").trim();
+  const apiKey = String(env.GROQ_API_KEY ?? "").trim();
+  const model = String(env.GROQ_MODEL ?? "openai/gpt-oss-20b").trim();
   const missing = [];
-  if (!apiKey) missing.push("GEMINI_API_KEY");
-  if (!model) missing.push("GEMINI_MODEL");
-  if (!["generateContent", "interactions"].includes(apiMode)) {
-    missing.push("GEMINI_API_MODE (generateContent ou interactions)");
-  }
-
-  return {
-    apiKey,
-    model,
-    apiMode,
-    missing,
-  };
+  if (!apiKey) missing.push("GROQ_API_KEY");
+  if (!model) missing.push("GROQ_MODEL");
+  return { apiKey, model, missing };
 }
 
 function makeChunks(messages, chunkSize, overlap) {
@@ -199,7 +189,7 @@ function validateMessageList(messages) {
 
 function validateResultItems(items, kind, chunk, knownMessages) {
   if (!Array.isArray(items)) {
-    throw new Error(`A resposta de IA não contém a lista ${kind} esperada.`);
+    throw new Error(`A resposta da IA não contém a lista ${kind} esperada.`);
   }
   return items.map(item => {
     if (!item || typeof item !== "object" || !Array.isArray(item.messageIndices)) {
@@ -256,19 +246,6 @@ function makePrompt(periodStart, periodEnd, messages) {
   return { system, user };
 }
 
-function formatGeminiError(status, error, apiKey) {
-  if (status === 401 || status === 403) {
-    return `O Gemini recusou a chave configurada. Confira GEMINI_API_KEY. ${safeProviderDetails(error, apiKey)}`;
-  }
-  if (status === 429) {
-    return `O Gemini recusou a solicitação por limite de uso ou cota. Confira o projeto e a cota da API. ${safeProviderDetails(error, apiKey)}`;
-  }
-  if (Number.isInteger(status)) {
-    return `A API do Gemini respondeu HTTP ${status}. ${safeProviderDetails(error, apiKey)}`;
-  }
-  return "Não foi possível conectar à API oficial do Gemini.";
-}
-
 function safeProviderDetails(error, apiKey) {
   const detail = String(error?.error?.message ?? error?.message ?? "")
     .replaceAll(apiKey, "[CHAVE_OCULTA]")
@@ -278,48 +255,6 @@ function safeProviderDetails(error, apiKey) {
     .trim()
     .slice(0, 300);
   return detail ? `Detalhe: ${detail}` : "";
-}
-
-function getModelOutputText(interaction) {
-  const modelOutput = interaction.steps
-    ?.filter(step => step.type === "model_output")
-    .at(-1);
-  if (!modelOutput) return "";
-  if (typeof modelOutput.content === "string") return modelOutput.content;
-  if (Array.isArray(modelOutput.content)) {
-    return modelOutput.content
-      .filter(part => part.type === "text" && typeof part.text === "string")
-      .map(part => part.text)
-      .join("");
-  }
-  if (typeof modelOutput.text === "string") return modelOutput.text;
-  return "";
-}
-
-function getGenerateContentText(response) {
-  return response.candidates?.[0]?.content?.parts
-    ?.filter(part => typeof part.text === "string")
-    .map(part => part.text)
-    .join("") ?? "";
-}
-
-function toGeminiSchema(schema) {
-  const { type, properties, items, ...rest } = schema;
-  const converted = { ...rest };
-  delete converted.additionalProperties;
-  if (Array.isArray(type)) {
-    converted.type = type.find(value => value !== "null").toUpperCase();
-    converted.nullable = type.includes("null");
-  } else if (type) {
-    converted.type = type.toUpperCase();
-  }
-  if (properties) {
-    converted.properties = Object.fromEntries(
-      Object.entries(properties).map(([key, value]) => [key, toGeminiSchema(value)]),
-    );
-  }
-  if (items) converted.items = toGeminiSchema(items);
-  return converted;
 }
 
 export function createAIAnalyzer(
@@ -340,16 +275,14 @@ export function createAIAnalyzer(
         connected: false,
         missing: configuration.missing,
         model: configuration.model || null,
-        provider: configuration.apiMode === "generateContent"
-          ? "Google Gemini generateContent"
-          : "Google Gemini Interactions API",
+        provider: "Groq API",
       };
     },
 
     async analyze({ driverName, periodStart, periodEnd, messages }, { onProgress = () => {} } = {}) {
       const configuration = getAIConfiguration(env);
       if (configuration.missing.length > 0) {
-        const error = new Error(`Configure ${configuration.missing.join(" e ")} no arquivo .env para ativar a análise Gemini.`);
+        const error = new Error(`Configure ${configuration.missing.join(" e ")} no arquivo .env para ativar a análise Groq.`);
         error.code = "AI_NOT_CONFIGURED";
         throw error;
       }
@@ -375,9 +308,7 @@ export function createAIAnalyzer(
           unclassified: [],
           summary: { messagesAnalyzed: 0, rides: 0, unresolved: 0, unclassified: 0 },
           model: configuration.model,
-          provider: configuration.apiMode === "generateContent"
-            ? "Google Gemini generateContent"
-            : "Google Gemini Interactions API",
+          provider: "Groq API",
         };
       }
 
@@ -413,42 +344,26 @@ export function createAIAnalyzer(
         let responseBody = {};
         for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
           try {
-            const interactionsMode = configuration.apiMode === "interactions";
-            const requestUrl = interactionsMode
-              ? "https://generativelanguage.googleapis.com/v1beta/interactions"
-              : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(configuration.model)}:generateContent`;
-            const requestBody = interactionsMode
-              ? {
-                model: configuration.model,
-                system_instruction: prompt.system,
-                input: prompt.user,
-                store: false,
-                generation_config: { thinking_level: "low" },
-                response_format: {
-                  type: "text",
-                  mime_type: "application/json",
-                  schema: ANALYSIS_SCHEMA,
-                },
-              }
-              : {
-                systemInstruction: { parts: [{ text: prompt.system }] },
-                contents: [{ role: "user", parts: [{ text: prompt.user }] }],
-                generationConfig: {
-                  responseMimeType: "application/json",
-                  responseSchema: toGeminiSchema(ANALYSIS_SCHEMA),
-                  thinkingConfig: { thinkingLevel: "LOW" },
-                },
-              };
             response = await fetchImpl(
-              requestUrl,
+              "https://api.groq.com/openai/v1/chat/completions",
               {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
-                  "x-goog-api-key": configuration.apiKey,
-                  ...(interactionsMode ? { "Api-Revision": "2026-05-20" } : {}),
+                  Authorization: `Bearer ${configuration.apiKey}`,
                 },
-                body: JSON.stringify(requestBody),
+                body: JSON.stringify({
+                  model: configuration.model,
+                  temperature: 0.1,
+                  response_format: { type: "json_object" },
+                  messages: [
+                    {
+                      role: "system",
+                      content: `${prompt.system}\n\nRetorne JSON válido com exatamente estas três propriedades: rides, unresolved e unclassified. Cada objeto deve seguir os campos e tipos definidos no schema: ${JSON.stringify(ANALYSIS_SCHEMA)}.`,
+                    },
+                    { role: "user", content: prompt.user },
+                  ],
+                }),
                 signal: AbortSignal.timeout(180_000),
               },
             );
@@ -460,48 +375,42 @@ export function createAIAnalyzer(
           } catch (error) {
             const timedOut = error.name === "TimeoutError";
             const failure = new Error(timedOut
-              ? "A análise excedeu o tempo limite de conexão com o Gemini."
-              : formatGeminiError(null, error, configuration.apiKey));
-            failure.code = timedOut ? "GEMINI_TIMEOUT" : "GEMINI_UNAVAILABLE";
+              ? "A análise excedeu o tempo limite de conexão com a Groq."
+              : `Não foi possível conectar à API da Groq. ${safeProviderDetails(error, configuration.apiKey)}`);
+            failure.code = timedOut ? "GROQ_TIMEOUT" : "GROQ_UNAVAILABLE";
             failure.statusCode = 502;
             throw failure;
           }
-          if (response.status !== 503 || attempt === retryDelaysMs.length) break;
+          if (![429, 503].includes(response.status) || attempt === retryDelaysMs.length) break;
           await sleep(retryDelaysMs[attempt]);
         }
 
         if (!response.ok) {
-          const failure = new Error(formatGeminiError(
-            response.status,
-            responseBody,
-            configuration.apiKey,
-          ));
-          failure.code = response.status === 401 || response.status === 403
-            ? "GEMINI_AUTH_ERROR"
+          const detail = safeProviderDetails(responseBody, configuration.apiKey);
+          const failure = new Error(response.status === 401 || response.status === 403
+            ? `A Groq recusou a chave configurada. Confira GROQ_API_KEY. ${detail}`
             : response.status === 429
-              ? "GEMINI_RATE_LIMIT"
-              : "GEMINI_PROVIDER_ERROR";
+              ? `A Groq atingiu o limite de uso da conta. Aguarde a renovação da cota. ${detail}`
+              : `A API da Groq respondeu HTTP ${response.status}. ${detail}`);
+          failure.code = response.status === 401 || response.status === 403
+            ? "GROQ_AUTH_ERROR"
+            : response.status === 429
+              ? "GROQ_RATE_LIMIT"
+              : "GROQ_PROVIDER_ERROR";
           failure.statusCode = response.status;
           throw failure;
         }
 
         let payload;
         try {
-          const responseText = configuration.apiMode === "generateContent"
-            ? getGenerateContentText(responseBody)
-            : getModelOutputText(responseBody);
-          if (!responseText) {
-            const finishReason = configuration.apiMode === "generateContent"
-              ? responseBody.candidates?.[0]?.finishReason
-              : responseBody.status;
-            throw new Error(finishReason
-              ? `Resposta vazia (motivo: ${finishReason}).`
-              : "A resposta estruturada está vazia.");
+          const responseText = responseBody.choices?.[0]?.message?.content;
+          if (typeof responseText !== "string" || !responseText.trim()) {
+            throw new Error("A resposta estruturada está vazia.");
           }
           payload = JSON.parse(responseText);
         } catch (error) {
-          const failure = new Error(`O Gemini retornou uma resposta estruturada inválida: ${error.message}`);
-          failure.code = "GEMINI_INVALID_RESPONSE";
+          const failure = new Error(`A Groq retornou uma resposta JSON inválida: ${error.message}`);
+          failure.code = "GROQ_INVALID_RESPONSE";
           failure.statusCode = 502;
           throw failure;
         }
@@ -510,7 +419,7 @@ export function createAIAnalyzer(
         const parsedRides = validateResultItems(payload.rides, "rides", chunk, chunkMessages);
         const parsedUnresolved = validateResultItems(payload.unresolved, "unresolved", chunk, chunkMessages);
         if (!Array.isArray(payload.unclassified)) {
-          throw new Error("A resposta do Gemini não contém a lista unclassified esperada.");
+          throw new Error("A resposta da IA não contém a lista unclassified esperada.");
         }
         const parsedUnclassified = payload.unclassified.map(item => {
           if (
@@ -521,7 +430,7 @@ export function createAIAnalyzer(
             || typeof item.reason !== "string"
             || !item.reason.trim()
           ) {
-            throw new Error("A resposta do Gemini contém mensagens sem justificativa válida.");
+            throw new Error("A resposta da IA contém mensagens sem justificativa válida.");
           }
           return {
             ...item,
@@ -531,13 +440,13 @@ export function createAIAnalyzer(
 
         for (const ride of parsedRides) {
           if (!["confirmed", "cancelled", "pending"].includes(ride.status)) {
-            throw new Error("O Gemini retornou um status de corrida desconhecido.");
+            throw new Error("A IA retornou um status de corrida desconhecido.");
           }
           if (
             ride.amountCents !== null
             && (!Number.isSafeInteger(ride.amountCents) || ride.amountCents <= 0)
           ) {
-            throw new Error("O Gemini retornou um valor monetário inválido.");
+            throw new Error("A IA retornou um valor monetário inválido.");
           }
           const key = `${ride.anchorIndex}|${ride.tripNumber ?? "1"}|${ride.status}|${ride.amountCents ?? "null"}`;
           if (!seenRides.has(key)) {
@@ -576,7 +485,7 @@ export function createAIAnalyzer(
             date: message.date,
             time: message.time,
             amountCents: null,
-            reason: "O Gemini não classificou esta mensagem; revisão humana necessária.",
+            reason: "A IA não classificou esta mensagem; revisão humana necessária.",
             confidence: 0,
           });
         }
@@ -606,9 +515,7 @@ export function createAIAnalyzer(
             .reduce((sum, ride) => sum + (ride.amountCents ?? 0), 0),
         },
         model: configuration.model,
-        provider: configuration.apiMode === "generateContent"
-          ? "Google Gemini generateContent"
-          : "Google Gemini Interactions API",
+        provider: "Groq API",
       };
     },
   };
