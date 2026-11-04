@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAIAnalyzer, getAIConfiguration } from "./aiAnalysis.js";
@@ -97,7 +98,22 @@ test("Groq receives minimized messages and requests JSON output", async () => {
   assert.equal(requestUrl, "https://api.groq.com/openai/v1/chat/completions");
   assert.equal(authorization, "Bearer test-key");
   assert.equal(requestPayload.model, "openai/gpt-oss-20b");
-  assert.deepEqual(requestPayload.response_format, { type: "json_object" });
+
+  assert.equal(requestPayload.response_format.type, "json_schema");
+  assert.equal(
+    requestPayload.response_format.json_schema.name,
+    "whatsapp_analysis",
+  );
+  assert.equal(requestPayload.response_format.json_schema.strict, true);
+  assert.equal(
+    requestPayload.response_format.json_schema.schema.type,
+    "object",
+  );
+  assert.deepEqual(
+    requestPayload.response_format.json_schema.schema.required,
+    ["rides", "unresolved", "unclassified"],
+  );
+
   assert.equal(requestPayload.messages[0].role, "system");
   assert.equal(requestPayload.messages[1].role, "user");
   assert.match(serializedRequest, /mensagensAnonimizadas/);

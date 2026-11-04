@@ -32,12 +32,38 @@ const ANALYSIS_SCHEMA = {
         ],
         properties: {
           anchorIndex: { type: "integer" },
-          messageIndices: { type: "array", items: { type: "integer" } },
-          tripNumber: { type: ["string", "null"] },
-          date: { type: ["string", "null"] },
-          time: { type: ["string", "null"] },
-          amountCents: { type: ["integer", "null"] },
-          status: { type: "string", enum: ["confirmed", "cancelled", "pending"] },
+          messageIndices: {
+            type: "array",
+            items: { type: "integer" },
+          },
+          tripNumber: {
+            anyOf: [
+              { type: "string" },
+              { type: "null" },
+            ],
+          },
+          date: {
+            anyOf: [
+              { type: "string" },
+              { type: "null" },
+            ],
+          },
+          time: {
+            anyOf: [
+              { type: "string" },
+              { type: "null" },
+            ],
+          },
+          amountCents: {
+            anyOf: [
+              { type: "integer" },
+              { type: "null" },
+            ],
+          },
+          status: {
+            type: "string",
+            enum: ["confirmed", "cancelled", "pending"],
+          },
           routeSummary: { type: "string" },
           reason: { type: "string" },
           confidence: { type: "number" },
@@ -60,10 +86,28 @@ const ANALYSIS_SCHEMA = {
         ],
         properties: {
           anchorIndex: { type: "integer" },
-          messageIndices: { type: "array", items: { type: "integer" } },
-          date: { type: ["string", "null"] },
-          time: { type: ["string", "null"] },
-          amountCents: { type: ["integer", "null"] },
+          messageIndices: {
+            type: "array",
+            items: { type: "integer" },
+          },
+          date: {
+            anyOf: [
+              { type: "string" },
+              { type: "null" },
+            ],
+          },
+          time: {
+            anyOf: [
+              { type: "string" },
+              { type: "null" },
+            ],
+          },
+          amountCents: {
+            anyOf: [
+              { type: "integer" },
+              { type: "null" },
+            ],
+          },
           reason: { type: "string" },
           confidence: { type: "number" },
         },
@@ -76,7 +120,10 @@ const ANALYSIS_SCHEMA = {
         additionalProperties: false,
         required: ["messageIndices", "reason"],
         properties: {
-          messageIndices: { type: "array", items: { type: "integer" } },
+          messageIndices: {
+            type: "array",
+            items: { type: "integer" },
+          },
           reason: { type: "string" },
         },
       },
@@ -86,17 +133,30 @@ const ANALYSIS_SCHEMA = {
 
 function loadEnvFile(fileName) {
   let contents;
+
   try {
-    contents = readFileSync(resolve(process.cwd(), fileName), "utf8");
+    contents = readFileSync(
+      resolve(process.cwd(), fileName),
+      "utf8",
+    );
   } catch (error) {
     if (error.code === "ENOENT") return;
     throw error;
   }
 
   for (const line of contents.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (!match || process.env[match[1]] !== undefined) continue;
-    const value = match[2].replace(/^(['"])(.*)\1$/, "$2").replace(/\s+#.*$/, "");
+    const match = line.match(
+      /^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/,
+    );
+
+    if (!match || process.env[match[1]] !== undefined) {
+      continue;
+    }
+
+    const value = match[2]
+      .replace(/^(['"])(.*)\1$/, "$2")
+      .replace(/\s+#.*$/, "");
+
     process.env[match[1]] = value;
   }
 }
@@ -106,52 +166,86 @@ loadEnvFile(".env.local");
 
 export function getAIConfiguration(env = process.env) {
   const apiKey = String(env.GROQ_API_KEY ?? "").trim();
-  const model = String(env.GROQ_MODEL ?? "openai/gpt-oss-20b").trim();
+  const model = String(
+    env.GROQ_MODEL ?? "openai/gpt-oss-20b",
+  ).trim();
+
   const missing = [];
+
   if (!apiKey) missing.push("GROQ_API_KEY");
   if (!model) missing.push("GROQ_MODEL");
-  return { apiKey, model, missing };
+
+  return {
+    apiKey,
+    model,
+    missing,
+  };
 }
 
 function makeChunks(messages, chunkSize, overlap) {
   const chunks = [];
   const stride = chunkSize - overlap;
+
   for (let start = 0; start < messages.length; start += stride) {
     const end = Math.min(start + chunkSize, messages.length);
-    const chunkMessages = messages.slice(start, end).map((message, index) => ({
-      ...message,
-      contextOnly: Boolean(message.contextOnly) || (chunks.length > 0 && index < overlap),
-    }));
+
+    const chunkMessages = messages
+      .slice(start, end)
+      .map((message, index) => ({
+        ...message,
+        contextOnly:
+          Boolean(message.contextOnly)
+          || (chunks.length > 0 && index < overlap),
+      }));
+
     chunks.push({
       messages: chunkMessages,
       coreIndexes: new Set(
-        chunkMessages.filter(message => !message.contextOnly).map(message => message.index),
+        chunkMessages
+          .filter(message => !message.contextOnly)
+          .map(message => message.index),
       ),
     });
   }
+
   return chunks;
 }
 
-function selectPeriodWithBoundaryContext(messages, periodStart, periodEnd) {
+function selectPeriodWithBoundaryContext(
+  messages,
+  periodStart,
+  periodEnd,
+) {
   const ordered = [...messages].sort((left, right) => (
     left.date.localeCompare(right.date)
     || left.time.localeCompare(right.time)
     || left.index - right.index
   ));
+
   const inPeriod = ordered
     .map((message, position) => ({ message, position }))
     .filter(({ message }) => (
       (!periodStart || message.date >= periodStart)
       && (!periodEnd || message.date <= periodEnd)
     ));
+
   if (inPeriod.length === 0) return [];
 
-  const selectedIndexes = new Set(inPeriod.map(({ message }) => message.index));
+  const selectedIndexes = new Set(
+    inPeriod.map(({ message }) => message.index),
+  );
+
   const firstPosition = inPeriod[0].position;
   const lastPosition = inPeriod.at(-1).position;
-  for (let offset = 1; offset <= DEFAULT_CHUNK_OVERLAP; offset += 1) {
+
+  for (
+    let offset = 1;
+    offset <= DEFAULT_CHUNK_OVERLAP;
+    offset += 1
+  ) {
     const before = ordered[firstPosition - offset];
     const after = ordered[lastPosition + offset];
+
     if (before) selectedIndexes.add(before.index);
     if (after) selectedIndexes.add(after.index);
   }
@@ -160,16 +254,24 @@ function selectPeriodWithBoundaryContext(messages, periodStart, periodEnd) {
     .filter(message => selectedIndexes.has(message.index))
     .map(message => ({
       ...message,
-      contextOnly: message.date < (periodStart ?? "0000-00-00")
+      contextOnly:
+        message.date < (periodStart ?? "0000-00-00")
         || message.date > (periodEnd ?? "9999-99-99"),
     }));
 }
 
 function validateMessageList(messages) {
-  if (!Array.isArray(messages) || messages.length > MAX_MESSAGES) {
-    throw new Error(`O período contém mais de ${MAX_MESSAGES} mensagens ou tem formato inválido.`);
+  if (
+    !Array.isArray(messages)
+    || messages.length > MAX_MESSAGES
+  ) {
+    throw new Error(
+      `O período contém mais de ${MAX_MESSAGES} mensagens ou tem formato inválido.`,
+    );
   }
+
   const seen = new Set();
+
   for (const message of messages) {
     if (
       !Number.isSafeInteger(message.index)
@@ -181,24 +283,47 @@ function validateMessageList(messages) {
       || message.body.length > MAX_MESSAGE_LENGTH
       || seen.has(message.index)
     ) {
-      throw new Error("A conversa contém mensagens inválidas ou identificadores repetidos.");
+      throw new Error(
+        "A conversa contém mensagens inválidas ou identificadores repetidos.",
+      );
     }
+
     seen.add(message.index);
   }
 }
 
-function validateResultItems(items, kind, chunk, knownMessages) {
+function validateResultItems(
+  items,
+  kind,
+  chunk,
+  knownMessages,
+) {
   if (!Array.isArray(items)) {
-    throw new Error(`A resposta da IA não contém a lista ${kind} esperada.`);
+    throw new Error(
+      `A resposta da IA não contém a lista ${kind} esperada.`,
+    );
   }
+
   return items.map(item => {
-    if (!item || typeof item !== "object" || !Array.isArray(item.messageIndices)) {
-      throw new Error(`Um item ${kind} da IA não tem mensagens de origem válidas.`);
+    if (
+      !item
+      || typeof item !== "object"
+      || !Array.isArray(item.messageIndices)
+    ) {
+      throw new Error(
+        `Um item ${kind} da IA não tem mensagens de origem válidas.`,
+      );
     }
+
     const messageIndices = [...new Set(item.messageIndices)];
+
     if (
       messageIndices.length === 0
-      || messageIndices.some(index => !Number.isSafeInteger(index) || !knownMessages.has(index))
+      || messageIndices.some(
+        index =>
+          !Number.isSafeInteger(index)
+          || !knownMessages.has(index),
+      )
       || !Number.isSafeInteger(item.anchorIndex)
       || !chunk.coreIndexes.has(item.anchorIndex)
       || !messageIndices.includes(item.anchorIndex)
@@ -208,20 +333,31 @@ function validateResultItems(items, kind, chunk, knownMessages) {
       || item.confidence < 0
       || item.confidence > 1
     ) {
-      throw new Error(`Um item ${kind} da IA contém referências ou classificações inválidas.`);
+      throw new Error(
+        `Um item ${kind} da IA contém referências ou classificações inválidas.`,
+      );
     }
+
     const anchor = knownMessages.get(item.anchorIndex);
-    const date = typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date)
-      ? item.date
-      : anchor.date;
-    const time = typeof item.time === "string" && /^\d{1,2}:\d{2}(?::\d{2})?$/.test(item.time)
-      ? item.time
-      : anchor.time;
+
+    const date =
+      typeof item.date === "string"
+      && /^\d{4}-\d{2}-\d{2}$/.test(item.date)
+        ? item.date
+        : anchor.date;
+
+    const time =
+      typeof item.time === "string"
+      && /^\d{1,2}:\d{2}(?::\d{2})?$/.test(item.time)
+        ? item.time
+        : anchor.time;
 
     return {
       ...item,
       messageIndices,
-      evidence: messageIndices.map(index => knownMessages.get(index)),
+      evidence: messageIndices.map(
+        index => knownMessages.get(index),
+      ),
       date,
       time,
     };
@@ -239,21 +375,29 @@ function makePrompt(periodStart, periodEnd, messages) {
     `Considere corridas somente entre ${periodStart ?? "início da conversa"} e ${periodEnd ?? "fim da conversa"}. A data e a hora originais estão em cada mensagem.`,
     "Devolva apenas os campos definidos no schema JSON. routeSummary deve usar apenas locais já anonimizados; não tente adivinhar nomes ou endereços.",
   ].join("\n");
+
   const user = JSON.stringify({
-    intervalo: { inicio: periodStart ?? null, fim: periodEnd ?? null },
+    intervalo: {
+      inicio: periodStart ?? null,
+      fim: periodEnd ?? null,
+    },
     mensagensAnonimizadas: messages,
   });
+
   return { system, user };
 }
 
 function safeProviderDetails(error, apiKey) {
-  const detail = String(error?.error?.message ?? error?.message ?? "")
+  const detail = String(
+    error?.error?.message ?? error?.message ?? "",
+  )
     .replaceAll(apiKey, "[CHAVE_OCULTA]")
     .replace(/\bBearer\s+\S+/giu, "Bearer [CHAVE_OCULTA]")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/gu, "[CHAVE_OCULTA]")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);
+
   return detail ? `Detalhe: ${detail}` : "";
 }
 
@@ -264,12 +408,16 @@ export function createAIAnalyzer(
     chunkSize = DEFAULT_CHUNK_SIZE,
     overlap = DEFAULT_CHUNK_OVERLAP,
     retryDelaysMs = [3000, 8000, 15000, 30000],
-    sleep = delay => new Promise(resolveTimeout => setTimeout(resolveTimeout, delay)),
+    sleep = delay =>
+      new Promise(resolveTimeout =>
+        setTimeout(resolveTimeout, delay),
+      ),
   } = {},
 ) {
   return {
     status() {
       const configuration = getAIConfiguration(env);
+
       return {
         ready: configuration.missing.length === 0,
         connected: false,
@@ -279,47 +427,101 @@ export function createAIAnalyzer(
       };
     },
 
-    async analyze({ driverName, periodStart, periodEnd, messages }, { onProgress = () => {} } = {}) {
+    async analyze(
+      { driverName, periodStart, periodEnd, messages },
+      { onProgress = () => {} } = {},
+    ) {
       const configuration = getAIConfiguration(env);
+
       if (configuration.missing.length > 0) {
-        const error = new Error(`Configure ${configuration.missing.join(" e ")} no arquivo .env para ativar a análise Groq.`);
+        const error = new Error(
+          `Configure ${configuration.missing.join(" e ")} no arquivo .env para ativar a análise Groq.`,
+        );
+
         error.code = "AI_NOT_CONFIGURED";
         throw error;
       }
-      if (typeof driverName !== "string" || !driverName.trim()) {
-        throw new Error("Motorista não identificado para análise da conversa.");
+
+      if (
+        typeof driverName !== "string"
+        || !driverName.trim()
+      ) {
+        throw new Error(
+          "Motorista não identificado para análise da conversa.",
+        );
       }
-      if (periodStart && !/^\d{4}-\d{2}-\d{2}$/.test(periodStart)) {
+
+      if (
+        periodStart
+        && !/^\d{4}-\d{2}-\d{2}$/.test(periodStart)
+      ) {
         throw new Error("A data inicial do período é inválida.");
       }
-      if (periodEnd && !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) {
+
+      if (
+        periodEnd
+        && !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)
+      ) {
         throw new Error("A data final do período é inválida.");
       }
-      if (periodStart && periodEnd && periodStart > periodEnd) {
+
+      if (
+        periodStart
+        && periodEnd
+        && periodStart > periodEnd
+      ) {
         throw new Error("O período da análise é inválido.");
       }
+
       validateMessageList(messages);
 
-      const selectedMessages = selectPeriodWithBoundaryContext(messages, periodStart, periodEnd);
-      if (selectedMessages.length === 0 || !selectedMessages.some(message => !message.contextOnly)) {
+      const selectedMessages = selectPeriodWithBoundaryContext(
+        messages,
+        periodStart,
+        periodEnd,
+      );
+
+      if (
+        selectedMessages.length === 0
+        || !selectedMessages.some(message => !message.contextOnly)
+      ) {
         return {
           rides: [],
           unresolved: [],
           unclassified: [],
-          summary: { messagesAnalyzed: 0, rides: 0, unresolved: 0, unclassified: 0 },
+          summary: {
+            messagesAnalyzed: 0,
+            rides: 0,
+            unresolved: 0,
+            unclassified: 0,
+          },
           model: configuration.model,
           provider: "Groq API",
         };
       }
 
-      const anonymizedMessages = anonymizeWhatsAppMessages(selectedMessages, driverName);
-      const chunks = makeChunks(anonymizedMessages, chunkSize, overlap);
+      const anonymizedMessages =
+        anonymizeWhatsAppMessages(
+          selectedMessages,
+          driverName,
+        );
+
+      const chunks = makeChunks(
+        anonymizedMessages,
+        chunkSize,
+        overlap,
+      );
+
       if (chunks.length > MAX_CHUNKS) {
-        throw new Error(`O período excede o limite de ${MAX_CHUNKS} partes de análise. Reduza o intervalo selecionado.`);
+        throw new Error(
+          `O período excede o limite de ${MAX_CHUNKS} partes de análise. Reduza o intervalo selecionado.`,
+        );
       }
+
       const rides = [];
       const unresolved = [];
       const unclassified = [];
+
       const seenRides = new Set();
       const seenUnresolved = new Set();
       const seenUnclassified = new Set();
@@ -328,21 +530,35 @@ export function createAIAnalyzer(
         stage: "preparing",
         completedChunks: 0,
         totalChunks: chunks.length,
-        messagesAnalyzed: selectedMessages.filter(message => !message.contextOnly).length,
+        messagesAnalyzed: selectedMessages.filter(
+          message => !message.contextOnly,
+        ).length,
       });
 
       for (const [chunkIndex, chunk] of chunks.entries()) {
-        const prompt = makePrompt(periodStart, periodEnd, chunk.messages);
+        const prompt = makePrompt(
+          periodStart,
+          periodEnd,
+          chunk.messages,
+        );
+
         onProgress({
           stage: "analyzing",
           completedChunks: chunkIndex,
           totalChunks: chunks.length,
-          messagesAnalyzed: selectedMessages.filter(message => !message.contextOnly).length,
+          messagesAnalyzed: selectedMessages.filter(
+            message => !message.contextOnly,
+          ).length,
         });
 
         let response;
         let responseBody = {};
-        for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+
+        for (
+          let attempt = 0;
+          attempt <= retryDelaysMs.length;
+          attempt += 1
+        ) {
           try {
             response = await fetchImpl(
               "https://api.groq.com/openai/v1/chat/completions",
@@ -355,18 +571,30 @@ export function createAIAnalyzer(
                 body: JSON.stringify({
                   model: configuration.model,
                   temperature: 0.1,
-                  response_format: { type: "json_object" },
+                  response_format: {
+                    type: "json_schema",
+                    json_schema: {
+                      name: "whatsapp_analysis",
+                      strict: true,
+                      schema: ANALYSIS_SCHEMA,
+                    },
+                  },
                   messages: [
                     {
                       role: "system",
-                      content: `${prompt.system}\n\nRetorne JSON válido com exatamente estas três propriedades: rides, unresolved e unclassified. Cada objeto deve seguir os campos e tipos definidos no schema: ${JSON.stringify(ANALYSIS_SCHEMA)}.`,
+                      content:
+                        `${prompt.system}\n\nRetorne JSON válido com exatamente estas três propriedades: rides, unresolved e unclassified. Cada objeto deve seguir os campos e tipos definidos no schema: ${JSON.stringify(ANALYSIS_SCHEMA)}.`,
                     },
-                    { role: "user", content: prompt.user },
+                    {
+                      role: "user",
+                      content: prompt.user,
+                    },
                   ],
                 }),
                 signal: AbortSignal.timeout(180_000),
               },
             );
+
             try {
               responseBody = await response.json();
             } catch {
@@ -374,118 +602,212 @@ export function createAIAnalyzer(
             }
           } catch (error) {
             const timedOut = error.name === "TimeoutError";
-            const failure = new Error(timedOut
-              ? "A análise excedeu o tempo limite de conexão com a Groq."
-              : `Não foi possível conectar à API da Groq. ${safeProviderDetails(error, configuration.apiKey)}`);
-            failure.code = timedOut ? "GROQ_TIMEOUT" : "GROQ_UNAVAILABLE";
+
+            const failure = new Error(
+              timedOut
+                ? "A análise excedeu o tempo limite de conexão com a Groq."
+                : `Não foi possível conectar à API da Groq. ${safeProviderDetails(error, configuration.apiKey)}`,
+            );
+
+            failure.code = timedOut
+              ? "GROQ_TIMEOUT"
+              : "GROQ_UNAVAILABLE";
+
             failure.statusCode = 502;
             throw failure;
           }
-          if (![429, 503].includes(response.status) || attempt === retryDelaysMs.length) break;
+
+          if (
+            ![429, 503].includes(response.status)
+            || attempt === retryDelaysMs.length
+          ) {
+            break;
+          }
+
           await sleep(retryDelaysMs[attempt]);
         }
 
         if (!response.ok) {
-          const detail = safeProviderDetails(responseBody, configuration.apiKey);
-          const failure = new Error(response.status === 401 || response.status === 403
-            ? `A Groq recusou a chave configurada. Confira GROQ_API_KEY. ${detail}`
-            : response.status === 429
-              ? `A Groq atingiu o limite de uso da conta. Aguarde a renovação da cota. ${detail}`
-              : `A API da Groq respondeu HTTP ${response.status}. ${detail}`);
-          failure.code = response.status === 401 || response.status === 403
-            ? "GROQ_AUTH_ERROR"
-            : response.status === 429
-              ? "GROQ_RATE_LIMIT"
-              : "GROQ_PROVIDER_ERROR";
+          const detail = safeProviderDetails(
+            responseBody,
+            configuration.apiKey,
+          );
+
+          const failure = new Error(
+            response.status === 401 || response.status === 403
+              ? `A Groq recusou a chave configurada. Confira GROQ_API_KEY. ${detail}`
+              : response.status === 429
+                ? `A Groq atingiu o limite de uso da conta. Aguarde a renovação da cota. ${detail}`
+                : `A API da Groq respondeu HTTP ${response.status}. ${detail}`,
+          );
+
+          failure.code =
+            response.status === 401 || response.status === 403
+              ? "GROQ_AUTH_ERROR"
+              : response.status === 429
+                ? "GROQ_RATE_LIMIT"
+                : "GROQ_PROVIDER_ERROR";
+
           failure.statusCode = response.status;
           throw failure;
         }
 
         let payload;
+
         try {
-          const responseText = responseBody.choices?.[0]?.message?.content;
-          if (typeof responseText !== "string" || !responseText.trim()) {
+          const responseText =
+            responseBody.choices?.[0]?.message?.content;
+
+          if (
+            typeof responseText !== "string"
+            || !responseText.trim()
+          ) {
             throw new Error("A resposta estruturada está vazia.");
           }
+
           payload = JSON.parse(responseText);
         } catch (error) {
-          const failure = new Error(`A Groq retornou uma resposta JSON inválida: ${error.message}`);
+          const failure = new Error(
+            `A Groq retornou uma resposta JSON inválida: ${error.message}`,
+          );
+
           failure.code = "GROQ_INVALID_RESPONSE";
           failure.statusCode = 502;
           throw failure;
         }
 
-        const chunkMessages = new Map(chunk.messages.map(message => [message.index, message]));
-        const parsedRides = validateResultItems(payload.rides, "rides", chunk, chunkMessages);
-        const parsedUnresolved = validateResultItems(payload.unresolved, "unresolved", chunk, chunkMessages);
+        const chunkMessages = new Map(
+          chunk.messages.map(message => [
+            message.index,
+            message,
+          ]),
+        );
+
+        const parsedRides = validateResultItems(
+          payload.rides,
+          "rides",
+          chunk,
+          chunkMessages,
+        );
+
+        const parsedUnresolved = validateResultItems(
+          payload.unresolved,
+          "unresolved",
+          chunk,
+          chunkMessages,
+        );
+
         if (!Array.isArray(payload.unclassified)) {
-          throw new Error("A resposta da IA não contém a lista unclassified esperada.");
+          throw new Error(
+            "A resposta da IA não contém a lista unclassified esperada.",
+          );
         }
-        const parsedUnclassified = payload.unclassified.map(item => {
-          if (
-            !item
-            || !Array.isArray(item.messageIndices)
-            || item.messageIndices.length === 0
-            || item.messageIndices.some(index => !chunkMessages.has(index))
-            || typeof item.reason !== "string"
-            || !item.reason.trim()
-          ) {
-            throw new Error("A resposta da IA contém mensagens sem justificativa válida.");
-          }
-          return {
-            ...item,
-            messageIndices: [...new Set(item.messageIndices)],
-          };
-        });
+
+        const parsedUnclassified = payload.unclassified.map(
+          item => {
+            if (
+              !item
+              || !Array.isArray(item.messageIndices)
+              || item.messageIndices.length === 0
+              || item.messageIndices.some(
+                index => !chunkMessages.has(index),
+              )
+              || typeof item.reason !== "string"
+              || !item.reason.trim()
+            ) {
+              throw new Error(
+                "A resposta da IA contém mensagens sem justificativa válida.",
+              );
+            }
+
+            return {
+              ...item,
+              messageIndices: [
+                ...new Set(item.messageIndices),
+              ],
+            };
+          },
+        );
 
         for (const ride of parsedRides) {
-          if (!["confirmed", "cancelled", "pending"].includes(ride.status)) {
-            throw new Error("A IA retornou um status de corrida desconhecido.");
+          if (
+            !["confirmed", "cancelled", "pending"].includes(
+              ride.status,
+            )
+          ) {
+            throw new Error(
+              "A IA retornou um status de corrida desconhecido.",
+            );
           }
+
           if (
             ride.amountCents !== null
-            && (!Number.isSafeInteger(ride.amountCents) || ride.amountCents <= 0)
+            && (
+              !Number.isSafeInteger(ride.amountCents)
+              || ride.amountCents <= 0
+            )
           ) {
-            throw new Error("A IA retornou um valor monetário inválido.");
+            throw new Error(
+              "A IA retornou um valor monetário inválido.",
+            );
           }
-          const key = `${ride.anchorIndex}|${ride.tripNumber ?? "1"}|${ride.status}|${ride.amountCents ?? "null"}`;
+
+          const key =
+            `${ride.anchorIndex}|${ride.tripNumber ?? "1"}|${ride.status}|${ride.amountCents ?? "null"}`;
+
           if (!seenRides.has(key)) {
             seenRides.add(key);
             rides.push(ride);
           }
         }
+
         for (const item of parsedUnresolved) {
-          const key = `${item.anchorIndex}|${item.messageIndices.join(",")}`;
+          const key =
+            `${item.anchorIndex}|${item.messageIndices.join(",")}`;
+
           if (!seenUnresolved.has(key)) {
             seenUnresolved.add(key);
             unresolved.push(item);
           }
         }
+
         for (const item of parsedUnclassified) {
-          const key = [...item.messageIndices].sort((left, right) => left - right).join(",");
+          const key = [...item.messageIndices]
+            .sort((left, right) => left - right)
+            .join(",");
+
           if (seenUnclassified.has(key)) continue;
+
           seenUnclassified.add(key);
           unclassified.push(item);
         }
 
-        const classifiedIndexes = new Set([
-          ...parsedRides,
-          ...parsedUnresolved,
-          ...parsedUnclassified,
-        ].flatMap(item => item.messageIndices));
+        const classifiedIndexes = new Set(
+          [
+            ...parsedRides,
+            ...parsedUnresolved,
+            ...parsedUnclassified,
+          ].flatMap(item => item.messageIndices),
+        );
+
         for (const index of chunk.coreIndexes) {
           if (classifiedIndexes.has(index)) continue;
+
           const message = chunkMessages.get(index);
           const key = `${index}|${index}`;
+
           if (seenUnresolved.has(key)) continue;
+
           seenUnresolved.add(key);
+
           unresolved.push({
             anchorIndex: index,
             messageIndices: [index],
             date: message.date,
             time: message.time,
             amountCents: null,
-            reason: "A IA não classificou esta mensagem; revisão humana necessária.",
+            reason:
+              "A IA não classificou esta mensagem; revisão humana necessária.",
             confidence: 0,
           });
         }
@@ -494,7 +816,9 @@ export function createAIAnalyzer(
           stage: "analyzing",
           completedChunks: chunkIndex + 1,
           totalChunks: chunks.length,
-          messagesAnalyzed: selectedMessages.filter(message => !message.contextOnly).length,
+          messagesAnalyzed: selectedMessages.filter(
+            message => !message.contextOnly,
+          ).length,
         });
       }
 
@@ -503,16 +827,27 @@ export function createAIAnalyzer(
         unresolved,
         unclassified,
         summary: {
-          messagesAnalyzed: selectedMessages.filter(message => !message.contextOnly).length,
+          messagesAnalyzed: selectedMessages.filter(
+            message => !message.contextOnly,
+          ).length,
           rides: rides.length,
           unresolved: unresolved.length,
           unclassified: unclassified.length,
-          confirmed: rides.filter(ride => ride.status === "confirmed").length,
-          cancelled: rides.filter(ride => ride.status === "cancelled").length,
-          pending: rides.filter(ride => ride.status === "pending").length,
+          confirmed: rides.filter(
+            ride => ride.status === "confirmed",
+          ).length,
+          cancelled: rides.filter(
+            ride => ride.status === "cancelled",
+          ).length,
+          pending: rides.filter(
+            ride => ride.status === "pending",
+          ).length,
           confirmedRevenueCents: rides
             .filter(ride => ride.status === "confirmed")
-            .reduce((sum, ride) => sum + (ride.amountCents ?? 0), 0),
+            .reduce(
+              (sum, ride) => sum + (ride.amountCents ?? 0),
+              0,
+            ),
         },
         model: configuration.model,
         provider: "Groq API",
