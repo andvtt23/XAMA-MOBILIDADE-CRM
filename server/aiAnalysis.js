@@ -328,7 +328,7 @@ export function createAIAnalyzer(
   {
     chunkSize = DEFAULT_CHUNK_SIZE,
     overlap = DEFAULT_CHUNK_OVERLAP,
-    retryDelaysMs = [1000, 2000],
+    retryDelaysMs = [3000, 8000, 15000, 30000],
     sleep = delay => new Promise(resolveTimeout => setTimeout(resolveTimeout, delay)),
   } = {},
 ) {
