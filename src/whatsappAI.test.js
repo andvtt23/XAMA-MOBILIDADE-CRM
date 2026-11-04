@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { analyzeWhatsAppExport } from "./whatsappAI.js";
+import { strToU8, zipSync } from "fflate";
+import { extractWhatsAppTextFiles } from "./whatsappImport.js";
+import {
+  analyzeWhatsAppExport,
+  analyzeWhatsAppExportLocally,
+} from "./whatsappAI.js";
 
 const conversation = [
   "25/10/2026 10:00 - Central Xama: Corrida Centro para Vila Nova",
@@ -18,6 +23,72 @@ function fetchResponse(result) {
     });
   };
 }
+
+test("manual ZIP analysis preserves fares and never auto-confirms candidates", async () => {
+  const driver = { id: 8, nome: "Camila", generoRegra: "mulher" };
+  const source = [
+    "27/10/2026 10:00 - Camila: A caminho",
+    "27/10/2026 10:01 - Central Xama: Centro para Vila Nova",
+    "27/10/2026 10:02 - Central Xama: 18 reais",
+    "27/10/2026 10:20 - Camila: Livre",
+    "27/10/2026 10:30 - Camila: A caminho",
+    "27/10/2026 10:31 - Central Xama: Rua A para Rua B",
+    "27/10/2026 10:32 - Central Xama: 16,50",
+    "27/10/2026 10:50 - Camila: Livre",
+    "27/10/2026 11:00 - Camila: A caminho",
+    "27/10/2026 11:01 - Central Xama: Corrida para o centro, 17 reais",
+    "27/10/2026 11:02 - Camila: Cancelada pelo passageiro",
+    "27/10/2026 11:10 - Camila: Livre",
+  ].join("\n");
+  const bytes = zipSync({ "conversa.txt": strToU8(source) });
+  const [conversationFile] = await extractWhatsAppTextFiles({
+    name: "conversa.zip",
+    arrayBuffer: async () => bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ),
+  });
+  const analysis = analyzeWhatsAppExportLocally({
+    text: conversationFile.text,
+    drivers: [driver],
+    driverId: driver.id,
+    periodStart: "2026-10-26",
+    periodEnd: "2026-11-01",
+  });
+
+  assert.equal(analysis.messages.length, 12);
+  assert.deepEqual(
+    analysis.candidates.map(candidate => candidate.amountCents),
+    [1800, 1650, 1700],
+  );
+  assert.ok(analysis.candidates.every(candidate => (
+    candidate.confirmed === false
+    && candidate.analysisStatus === "pending"
+    && candidate.analysisSource === "manual"
+    && candidate.driverId === driver.id
+  )));
+  assert.equal(analysis.candidates[2].classification, "cancelamento");
+  assert.equal(analysis.outsidePeriod, 0);
+});
+
+test("manual analysis applies selected dates and does not create a ride for Livre alone", () => {
+  const result = analyzeWhatsAppExportLocally({
+    text: [
+      "25/10/2026 10:00 - Camila: A caminho",
+      "25/10/2026 10:01 - Central Xama: 18 reais",
+      "25/10/2026 10:02 - Camila: Livre",
+      "26/10/2026 10:00 - Camila: Livre",
+    ].join("\n"),
+    drivers: [{ id: 8, nome: "Camila" }],
+    driverId: 8,
+    periodStart: "2026-10-26",
+    periodEnd: "2026-11-01",
+  });
+
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.outsidePeriod, 1);
+  assert.equal(result.messages.length, 4);
+});
 
 test("AI results retain original-message evidence and exact cents", async () => {
   const { candidates, summary, unclassified } = await analyzeWhatsAppExport({

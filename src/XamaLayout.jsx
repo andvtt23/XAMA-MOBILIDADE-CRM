@@ -86,7 +86,9 @@ function CartaoMotorista({
         </div>
         {importStatus && <span className="xama-import-status" role="status">{importStatus}</span>}
         <span className="xama-import-status" role="status">
-          IA Gemini: {aiStatus.loading
+          {aiStatus.manualFallback
+            ? "Última importação analisada localmente; confira os itens antes de aprovar."
+            : `IA Gemini: ${aiStatus.loading
             ? "consultando configuração…"
             : aiStatus.error
               ? aiStatus.error
@@ -94,7 +96,7 @@ function CartaoMotorista({
                 ? `não configurada; configure ${aiStatus.missing.join(" e ") || "GEMINI_API_KEY"} no .env.`
                 : aiStatus.connected
                   ? `conectada · ${aiStatus.model}`
-                  : `configurada · ${aiStatus.model}; conexão ainda não verificada`}
+                  : `configurada · ${aiStatus.model}; conexão ainda não verificada`}`}
         </span>
       </div>
 
@@ -180,7 +182,9 @@ function CartaoMotorista({
           <div className="xama-import-preview">
             <strong>Prévia da importação · {importPreview.arquivos.join(", ")}</strong>
             <p role="status">
-              IA Gemini: {aiStatus.loading
+              {importPreview.conversations.some(conversation => conversation.analysisMode === "manual")
+                ? "Modo manual ativo: os itens exigem revisão e aprovação antes de entrar no fechamento."
+                : `IA Gemini: ${aiStatus.loading
                 ? "consultando configuração…"
                 : aiStatus.error
                   ? aiStatus.error
@@ -188,7 +192,7 @@ function CartaoMotorista({
                     ? `não configurada; configure ${aiStatus.missing.join(" e ") || "GEMINI_API_KEY"} no .env.`
                     : aiStatus.connected
                       ? `conectada · ${aiStatus.model} · última chamada concluída com sucesso`
-                      : `configurada · ${aiStatus.model} · conexão será verificada na análise real`}
+                      : `configurada · ${aiStatus.model} · conexão será verificada na análise real`}`}
             </p>
             {importPreview.errors.map(error => (
               <p className="erro-importacao" key={`${error.arquivo}-${error.mensagem}`}>
@@ -205,6 +209,25 @@ function CartaoMotorista({
                     : ""}
                   {conversation.erro ? ` · ${conversation.erro}` : ""}
                 </p>
+                {conversation.analysisMode === "manual" && (
+                  <>
+                    <p className="nota-importacao">
+                      Análise local sem Gemini ({conversation.manualFailureReason}). Nenhum item será confirmado automaticamente.
+                    </p>
+                    {conversation.mensagens?.length > 0 && (
+                      <details>
+                        <summary>Ver mensagens preservadas ({conversation.mensagens.length})</summary>
+                        <ul>
+                          {conversation.mensagens.map((message, index) => (
+                            <li key={`${conversation.id}-message-${index}`}>
+                              {message.date} {message.time} · {message.sender}: {message.body}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </>
+                )}
                 {conversation.aiSummary && (
                   <p>
                     IA {conversation.aiSummary.model}: {conversation.aiSummary.confirmed} confirmada(s),{" "}
@@ -258,13 +281,16 @@ function CartaoMotorista({
               <button
                 type="button"
                 disabled={!importPreview.conversations.some(conversation => (
-                  !conversation.aiAnalysisFailed
-                  && (conversation.candidatos.length > 0
-                    || (conversation.motorista.driverId && !conversation.duplicada))
+                  !conversation.duplicada
+                  && (conversation.analysisMode === "manual"
+                    || conversation.candidatos.length > 0
+                    || conversation.motorista.driverId)
                 ))}
                 onClick={onConfirmImport}
               >
-                Confirmar importação
+                {importPreview.conversations.some(conversation => conversation.analysisMode === "manual")
+                  ? "Salvar para conferência manual"
+                  : "Confirmar importação"}
               </button>
               <button type="button" className="xama-cancel-preview" onClick={onCancelImport}>
                 Cancelar

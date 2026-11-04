@@ -3,9 +3,44 @@ import {
   fingerprintRide,
   parseAmount,
   parseWhatsAppMessages,
+  parseWhatsAppExport,
 } from "./whatsappImport.js";
 
 const MIN_CONFIDENCE_FOR_AUTO_APPROVAL = 0.85;
+
+export function analyzeWhatsAppExportLocally({
+  text,
+  drivers,
+  driverId = null,
+  periodStart,
+  periodEnd,
+}) {
+  const messages = parseWhatsAppMessages(text);
+  const parsedCandidates = parseWhatsAppExport(text, drivers, driverId);
+  const candidates = parsedCandidates
+    .filter(candidate => (
+      (!periodStart || candidate.date >= periodStart)
+      && (!periodEnd || candidate.date <= periodEnd)
+    ))
+    .map(candidate => ({
+      ...candidate,
+      confirmed: false,
+      analysisStatus: "pending",
+      analysisSource: "manual",
+      confirmationSignal: null,
+      reviewReason: [
+        "Modo manual: confirme motorista, valor e realização antes de aprovar",
+        candidate.reviewReason,
+      ].filter(Boolean).join(" — "),
+    }));
+
+  return {
+    messages,
+    candidates,
+    outsidePeriod: parsedCandidates.length - candidates.length,
+  };
+}
+
 function findFareEvidence(messages, amountCents) {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return false;
   return messages.some(message => {

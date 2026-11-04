@@ -14,7 +14,10 @@ import {
   extractWhatsAppBatch,
   createWeeklyDriverCalculation,
 } from "./whatsappImport.js";
-import { analyzeWhatsAppExport } from "./whatsappAI.js";
+import {
+  analyzeWhatsAppExport,
+  analyzeWhatsAppExportLocally,
+} from "./whatsappAI.js";
 import {
   mergeInitialDrivers,
   normalizeDriverName,
@@ -755,6 +758,7 @@ function CRMApplication({
     connected: false,
     missing: [],
     error: "",
+    manualFallback: false,
   });
   const [mensagensImportacaoMotoristas, setMensagensImportacaoMotoristas] = useState({});
   const [nome, setNome] = useState("");
@@ -1392,24 +1396,44 @@ function CRMApplication({
               ready: true,
               connected: true,
               error: "",
+              manualFallback: false,
               model: analysis.summary.model,
               provider: "Google Gemini API",
             }));
           } catch (error) {
+            const failureReason = error instanceof Error
+              ? error.message
+              : "Falha desconhecida ao consultar o Gemini.";
             setAiStatus(previous => ({
               ...previous,
               loading: false,
               connected: false,
-              error: error instanceof Error ? error.message : "Falha na API do Gemini.",
+              error: failureReason,
+              manualFallback: true,
             }));
-            conversation.aiAnalysisFailed = true;
-            conversation.erro = error instanceof Error
-              ? `Análise por IA não concluída: ${error.message}`
-              : "Análise por IA não concluída por erro desconhecido.";
-            conversations.push(conversation);
-            continue;
+            const localAnalysis = analyzeWhatsAppExportLocally({
+              text: textFile.text,
+              drivers: motoristas,
+              driverId: conversation.motorista.driverId,
+              periodStart: motoristaForcado?.periodStart ?? null,
+              periodEnd: motoristaForcado?.periodEnd ?? null,
+            });
+            candidates = localAnalysis.candidates;
+            conversation.analysisMode = "manual";
+            conversation.manualFailureReason = failureReason;
+            conversation.mensagens = localAnalysis.messages.map(message => ({
+              date: message.date,
+              time: message.time,
+              sender: message.sender,
+              body: message.body,
+              isSystem: Boolean(message.isSystem),
+            }));
+            conversation.foraDoPeriodo = localAnalysis.outsidePeriod;
+            if (candidates.length === 0) {
+              conversation.aviso = "Nenhuma corrida potencial foi identificada; as mensagens originais serão preservadas no histórico.";
+            }
           }
-          conversation.foraDoPeriodo = 0;
+          if (conversation.analysisMode !== "manual") conversation.foraDoPeriodo = 0;
           const fingerprintsInConversation = new Set();
           for (const candidate of candidates) {
             if (
@@ -1465,7 +1489,11 @@ function CRMApplication({
             }
           }
           if (conversation.candidatos.length === 0 && !conversation.duplicada) {
-            conversation.erro = "Nenhuma corrida potencial identificada; nenhuma corrida será inventada.";
+            if (conversation.analysisMode === "manual") {
+              conversation.aviso = "Nenhuma corrida potencial foi identificada; as mensagens originais serão preservadas no histórico.";
+            } else {
+              conversation.erro = "Nenhuma corrida potencial identificada; nenhuma corrida será inventada.";
+            }
           }
           conversations.push(conversation);
       }
@@ -1480,14 +1508,14 @@ function CRMApplication({
     const conversationCount = conversations.length;
     const candidateCount = conversations.reduce((sum, item) => sum + item.candidatos.length, 0);
     if (motoristaForcado) {
-      const failedCount = conversations.filter(item => item.aiAnalysisFailed).length;
+      const manualCount = conversations.filter(item => item.analysisMode === "manual").length;
       setMensagensImportacaoMotoristas(previous => ({
         ...previous,
-        [motoristaForcado.id]: `Prévia pronta: ${candidateCount} item(ns) no período para ${motoristaForcado.nome}.${failedCount ? ` ${failedCount} análise(s) de IA falharam; nenhum dado desses arquivos foi salvo.` : ""} Nada foi salvo ainda.`,
+        [motoristaForcado.id]: `Prévia pronta: ${candidateCount} item(ns) para conferência de ${motoristaForcado.nome}.${manualCount ? ` ${manualCount} conversa(s) processada(s) em modo manual; nenhum item foi confirmado automaticamente.` : ""} Nada foi salvo ainda.`,
       }));
     } else {
       setMensagemImportacao(
-        `Prévia pronta: ${arquivos.length} arquivo(s), ${conversationCount} conversa(s), ${candidateCount} item(ns) para conferência/confirmar; ${errors.length} arquivo(s) com erro. Nada foi salvo ainda.`,
+        `Prévia pronta: ${arquivos.length} arquivo(s), ${conversationCount} conversa(s), ${candidateCount} item(ns) para conferência; ${conversations.filter(item => item.analysisMode === "manual").length} conversa(s) em modo manual; ${errors.length} arquivo(s) com erro. Nada foi salvo ainda.`,
       );
     }
     setProcessandoArquivo(false);
@@ -1534,7 +1562,9 @@ function CRMApplication({
   function confirmarPreImportacao() {
     if (!preImportacao) return;
 
-    setConferenciaExpandida(false);
+    setConferenciaExpandida(preImportacao.conversations.some(
+      conversation => conversation.analysisMode === "manual",
+    ));
     const now = currentTimestamp();
     const newRides = [];
     const newReviews = [];
@@ -1543,23 +1573,6 @@ function CRMApplication({
     const details = [];
 
     for (const conversation of preImportacao.conversations) {
-      if (conversation.aiAnalysisFailed) {
-        details.push({
-          nome: conversation.arquivoConversa,
-          mensagensAnalisadas: conversation.mensagensAnalisadas,
-          motoristas: conversation.motorista.driverId
-            ? [motoristas.find(item => String(item.id) === String(conversation.motorista.driverId))?.nome].filter(Boolean)
-            : [],
-          corridasImportadas: 0,
-          itensConferencia: 0,
-          duplicada: false,
-          erro: conversation.erro,
-          periodo: conversation.periodo,
-          foraDoPeriodo: conversation.foraDoPeriodo ?? 0,
-          calculos: [],
-        });
-        continue;
-      }
       const selectedDriverId = conversation.motorista.driverId;
       if (selectedDriverId && !conversation.duplicada) {
         for (const label of new Set([
@@ -1600,10 +1613,14 @@ function CRMApplication({
           motoristas: conversation.motoristasIdentificados,
           corridasImportadas: 0,
           itensConferencia: 0,
+          analysisMode: conversation.analysisMode ?? "ai",
+          manualFailureReason: conversation.manualFailureReason ?? "",
+          mensagens: conversation.mensagens ?? undefined,
         });
         details.push({
           nome: conversation.arquivoConversa,
           mensagensAnalisadas: conversation.mensagensAnalisadas,
+          analysisMode: conversation.analysisMode ?? "ai",
           motoristas: conversation.motorista.driverId
             ? [motoristas.find(item => String(item.id) === String(conversation.motorista.driverId))?.nome].filter(Boolean)
             : [],
@@ -1659,6 +1676,9 @@ function CRMApplication({
         motoristas: conversation.motoristasIdentificados,
         corridasImportadas: acceptedCount,
         itensConferencia: reviewCount,
+        analysisMode: conversation.analysisMode ?? "ai",
+        manualFailureReason: conversation.manualFailureReason ?? "",
+        mensagens: conversation.mensagens ?? undefined,
       });
       const driverId = conversation.motorista.driverId;
       const conversationReviews = newReviews.filter(review => review.importacaoId === signature);
@@ -1702,6 +1722,7 @@ function CRMApplication({
       details.push({
         nome: conversation.arquivoConversa,
         mensagensAnalisadas: conversation.mensagensAnalisadas,
+        analysisMode: conversation.analysisMode ?? "ai",
         motoristas: driverId
           ? [motoristas.find(item => item.id === driverId)?.nome].filter(Boolean)
           : [],
@@ -1808,17 +1829,21 @@ function CRMApplication({
   }
 
   function aprovarRevisao(revisao) {
-    const driverIdRevisao = Number(revisao.driverIdRevisao);
+    const requestedDriverId = revisao.driverIdRevisao || revisao.driverId || "";
+    const motorista = motoristas.find(item => (
+      String(item.id) === String(requestedDriverId)
+    ));
+    const driverIdRevisao = motorista?.id;
     const valorRevisao = Number(revisao.valorRevisao);
     const valorRevisaoCents = Math.round(valorRevisao * 100);
-    const motoristaValido = motoristas.some(motorista => motorista.id === driverIdRevisao);
+    const motoristaValido = Boolean(motorista);
 
     const corridaExistente = corridasImportadas.find(corrida => (
       corrida.fingerprint === revisao.fingerprint
       || (revisao.hasTripId
         && corrida.identity === revisao.identity
         && corrida.date === revisao.date
-        && corrida.driverId === driverIdRevisao)
+        && String(corrida.driverId) === String(driverIdRevisao))
     ));
 
     if (revisao.classification === "sistema") {
@@ -1872,7 +1897,7 @@ function CRMApplication({
         amount: valorRevisao,
         amountCents: valorRevisaoCents,
         driverId: driverIdRevisao,
-        driverName: motoristas.find(item => item.id === driverIdRevisao)?.nome,
+        driverName: motorista?.nome,
         fingerprint: fingerprintRide({
           ...revisao,
           amountCents: valorRevisaoCents,
@@ -1894,7 +1919,6 @@ function CRMApplication({
       return;
     }
 
-    const motorista = motoristas.find(item => item.id === driverIdRevisao);
     const novaCorrida = {
         ...revisao,
         id: revisao.id,
@@ -3014,7 +3038,7 @@ function CRMApplication({
               const motoristasResultado = normalizarLista(resultadoImportacao.motoristas);
               return (
                 <div className="resultado-importacao">
-                  <h3>Resultado da análise: {resultadoImportacao.arquivo}</h3>
+                  <h3>Resultado da importação: {resultadoImportacao.arquivo}</h3>
                   <p>
                     {resultadoImportacao.mensagensAnalisadas} mensagem(ns) analisada(s) ·
                     Motoristas identificados: {motoristasResultado.length > 0
@@ -3028,6 +3052,7 @@ function CRMApplication({
                         return (
                           <li key={`${conversa.nome}-${index}`}>
                             <strong>{conversa.nome}</strong>: {conversa.mensagensAnalisadas} mensagem(ns);
+                            {conversa.analysisMode === "manual" && " análise manual; "}
                             motoristas: {motoristasConversa.length > 0 ? motoristasConversa.join(", ") : "nenhum"};
                             {` ${conversa.corridasImportadas} corrida(s) adicionada(s), ${conversa.itensConferencia} item(ns) para conferência.`}
                             {conversa.erro && <span className="erro-importacao"> {conversa.erro}</span>}
@@ -3071,7 +3096,9 @@ function CRMApplication({
               <div className="resultado-importacao">
                 <h3>Prévia do lote — ainda não salva</h3>
                 <p role="status">
-                  IA Gemini: {aiStatus.loading
+                  {preImportacao.conversations.some(conversation => conversation.analysisMode === "manual")
+                    ? "Modo manual ativo: a análise local continua disponível; todos os candidatos aguardam revisão e aprovação."
+                    : `IA Gemini: ${aiStatus.loading
                     ? "consultando configuração…"
                     : aiStatus.error
                       ? aiStatus.error
@@ -3079,7 +3106,7 @@ function CRMApplication({
                         ? `não configurada; configure ${aiStatus.missing.join(" e ") || "GEMINI_API_KEY"} no .env.`
                         : aiStatus.connected
                           ? `conectada · ${aiStatus.model} · última chamada concluída com sucesso`
-                          : `configurada · ${aiStatus.model} · conexão será verificada na análise real`}
+                          : `configurada · ${aiStatus.model} · conexão será verificada na análise real`}`}
                 </p>
                 <p>
                   {preImportacao.arquivos.length} arquivo(s),{" "}
@@ -3102,6 +3129,27 @@ function CRMApplication({
                     <strong>{conversation.arquivo} / {conversation.arquivoConversa}</strong>
                     <span> · {conversation.mensagensAnalisadas} mensagem(ns)</span>
                     {conversation.erro && <p className="erro-importacao">{conversation.erro}</p>}
+                    {conversation.aviso && <p className="nota-importacao">{conversation.aviso}</p>}
+                    {conversation.analysisMode === "manual" && (
+                      <>
+                        <p className="nota-importacao">
+                          Análise local sem Gemini. Motivo: {conversation.manualFailureReason}.
+                          Revise cada item; nenhum entra no fechamento antes da aprovação manual.
+                        </p>
+                        {conversation.mensagens?.length > 0 && (
+                          <details>
+                            <summary>Ver mensagens preservadas ({conversation.mensagens.length})</summary>
+                            <ul>
+                              {conversation.mensagens.map((message, index) => (
+                                <li key={`${conversation.id}-message-${index}`}>
+                                  {message.date} {message.time} · {message.sender}: {message.body}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </>
+                    )}
                     {!conversation.erro && (
                       <p>
                         Identificação: {conversation.motorista.method}
@@ -3184,12 +3232,15 @@ function CRMApplication({
                     type="button"
                     onClick={confirmarPreImportacao}
                     disabled={!preImportacao.conversations.some(conversation => (
-                      !conversation.aiAnalysisFailed
-                      && (conversation.candidatos.length > 0
-                        || (conversation.motorista.driverId && !conversation.duplicada))
+                      !conversation.duplicada
+                      && (conversation.analysisMode === "manual"
+                        || conversation.candidatos.length > 0
+                        || conversation.motorista.driverId)
                     ))}
                   >
-                    Confirmar importação e salvar
+                    {preImportacao.conversations.some(conversation => conversation.analysisMode === "manual")
+                      ? "Salvar para conferência manual"
+                      : "Confirmar importação e salvar"}
                   </button>
                   <button type="button" className="botao-secundario" onClick={() => setPreImportacao(null)}>
                     Cancelar prévia
@@ -3420,12 +3471,31 @@ function CRMApplication({
                 </table>
               </div>
               {importacoes.length > 0 && (
-                <p className="nota-importacao">
-                  Conversas registradas: {importacoes
-                    .map(importacao => `${importacao.nome} / ${importacao.arquivoConversa ?? importacao.nome}`)
-                    .join(", ")}.
-                  Corridas importadas: {corridasImportadas.length}.
-                </p>
+                <>
+                  <p className="nota-importacao">
+                    Conversas registradas: {importacoes
+                      .map(importacao => `${importacao.nome} / ${importacao.arquivoConversa ?? importacao.nome}`)
+                      .join(", ")}.
+                    Corridas importadas: {corridasImportadas.length}.
+                  </p>
+                  {importacoes.filter(importacao => (
+                    importacao.analysisMode === "manual" && Array.isArray(importacao.mensagens)
+                  )).map(importacao => (
+                    <details key={`${importacao.assinatura}-mensagens`}>
+                      <summary>
+                        Mensagens preservadas em modo manual — {importacao.arquivoConversa}
+                        {" "}({importacao.mensagens.length})
+                      </summary>
+                      <ul>
+                        {importacao.mensagens.map((message, index) => (
+                          <li key={`${importacao.assinatura}-${index}`}>
+                            {message.date} {message.time} · {message.sender}: {message.body}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ))}
+                </>
               )}
               {corridasImportadas.length > 0 && (
                 <div className="tabela-wrap">
