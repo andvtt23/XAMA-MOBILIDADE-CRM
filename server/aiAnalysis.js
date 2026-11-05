@@ -165,15 +165,15 @@ loadEnvFile(".env");
 loadEnvFile(".env.local");
 
 export function getAIConfiguration(env = process.env) {
-  const apiKey = String(env.GROQ_API_KEY ?? "").trim();
+  const apiKey = String(env.OPENAI_API_KEY ?? "").trim();
   const model = String(
-    env.GROQ_MODEL ?? "openai/gpt-oss-20b",
+    env.OPENAI_MODEL ?? "gpt-6-luna",
   ).trim();
 
   const missing = [];
 
-  if (!apiKey) missing.push("GROQ_API_KEY");
-  if (!model) missing.push("GROQ_MODEL");
+  if (!apiKey) missing.push("OPENAI_API_KEY");
+  if (!model) missing.push("OPENAI_MODEL");
 
   return {
     apiKey,
@@ -423,7 +423,7 @@ export function createAIAnalyzer(
         connected: false,
         missing: configuration.missing,
         model: configuration.model || null,
-        provider: "Groq API",
+        provider: "OpenAI API",
       };
     },
 
@@ -435,7 +435,7 @@ export function createAIAnalyzer(
 
       if (configuration.missing.length > 0) {
         const error = new Error(
-          `Configure ${configuration.missing.join(" e ")} no arquivo .env para ativar a análise Groq.`,
+          `Configure ${configuration.missing.join(" e ")} no arquivo .env para ativar a análise OpenAI.`,
         );
 
         error.code = "AI_NOT_CONFIGURED";
@@ -496,7 +496,7 @@ export function createAIAnalyzer(
             unclassified: 0,
           },
           model: configuration.model,
-          provider: "Groq API",
+          provider: "OpenAI API",
         };
       }
 
@@ -561,7 +561,7 @@ export function createAIAnalyzer(
         ) {
           try {
             response = await fetchImpl(
-              "https://api.groq.com/openai/v1/chat/completions",
+              "https://api.openai.com/v1/chat/completions",
               {
                 method: "POST",
                 headers: {
@@ -570,6 +570,7 @@ export function createAIAnalyzer(
                 },
                 body: JSON.stringify({
                   model: configuration.model,
+                  reasoning_effort: "none",
                   temperature: 0.1,
                   response_format: {
                     type: "json_schema",
@@ -605,13 +606,13 @@ export function createAIAnalyzer(
 
             const failure = new Error(
               timedOut
-                ? "A análise excedeu o tempo limite de conexão com a Groq."
-                : `Não foi possível conectar à API da Groq. ${safeProviderDetails(error, configuration.apiKey)}`,
+                ? "A análise excedeu o tempo limite de conexão com a OpenAI."
+                : `Não foi possível conectar à API da OpenAI. ${safeProviderDetails(error, configuration.apiKey)}`,
             );
 
             failure.code = timedOut
-              ? "GROQ_TIMEOUT"
-              : "GROQ_UNAVAILABLE";
+              ? "OPENAI_TIMEOUT"
+              : "OPENAI_UNAVAILABLE";
 
             failure.statusCode = 502;
             throw failure;
@@ -635,18 +636,18 @@ export function createAIAnalyzer(
 
           const failure = new Error(
             response.status === 401 || response.status === 403
-              ? `A Groq recusou a chave configurada. Confira GROQ_API_KEY. ${detail}`
+              ? `A OpenAI recusou a chave configurada. Confira OPENAI_API_KEY. ${detail}`
               : response.status === 429
-                ? `A Groq atingiu o limite de uso da conta. Aguarde a renovação da cota. ${detail}`
-                : `A API da Groq respondeu HTTP ${response.status}. ${detail}`,
+                ? `A OpenAI atingiu o limite de uso da conta. Aguarde a renovação da cota. ${detail}`
+                : `A API da OpenAI respondeu HTTP ${response.status}. ${detail}`,
           );
 
           failure.code =
             response.status === 401 || response.status === 403
-              ? "GROQ_AUTH_ERROR"
+              ? "OPENAI_AUTH_ERROR"
               : response.status === 429
-                ? "GROQ_RATE_LIMIT"
-                : "GROQ_PROVIDER_ERROR";
+                ? "OPENAI_RATE_LIMIT"
+                : "OPENAI_PROVIDER_ERROR";
 
           failure.statusCode = response.status;
           throw failure;
@@ -668,10 +669,10 @@ export function createAIAnalyzer(
           payload = JSON.parse(responseText);
         } catch (error) {
           const failure = new Error(
-            `A Groq retornou uma resposta JSON inválida: ${error.message}`,
+            `A OpenAI retornou uma resposta JSON inválida: ${error.message}`,
           );
 
-          failure.code = "GROQ_INVALID_RESPONSE";
+          failure.code = "OPENAI_INVALID_RESPONSE";
           failure.statusCode = 502;
           throw failure;
         }
@@ -850,7 +851,7 @@ export function createAIAnalyzer(
             ),
         },
         model: configuration.model,
-        provider: "Groq API",
+        provider: "OpenAI API",
       };
     },
   };

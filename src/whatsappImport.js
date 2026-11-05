@@ -1083,7 +1083,7 @@ export function parseWhatsAppExport(text, drivers, conversationDriverId = null) 
     if (contextualMessageIndexes.has(messageIndex)) continue;
     if (message.isSystem) continue;
     const normalizedBody = normalizeText(message.body).replace(/\s+/g, " ").trim();
-    const referencesTrip = /\b(corrida|viagem|trip|ride|passageiro|embarque|servico)\b/.test(normalizedBody);
+    const referencesTrip = /\b(corrida|viagem|trip|ride|passageiro|embarque|servico|anota)\b/.test(normalizedBody);
     const amount = parseAmount(message.body);
     const cancellation = isRideCancellation(normalizedBody);
     const correction = /\b(corrig\w*|correcao|retific\w*|errad[oa]|ajust\w*|na verdade|nao tinha colocado|coloquei errado|valor errado)\b/.test(normalizedBody);

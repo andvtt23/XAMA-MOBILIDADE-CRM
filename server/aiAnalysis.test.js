@@ -1,14 +1,13 @@
-
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAIAnalyzer, getAIConfiguration } from "./aiAnalysis.js";
 
 const apiEnv = {
-  GROQ_API_KEY: "test-key",
-  GROQ_MODEL: "openai/gpt-oss-20b",
+  OPENAI_API_KEY: "test-key",
+  OPENAI_MODEL: "gpt-6-luna",
 };
 
-function groqResponse(result, status = 200) {
+function openAIResponse(result, status = 200) {
   return new Response(JSON.stringify({
     id: "test-completion",
     choices: [{
@@ -35,22 +34,22 @@ function sampleMessage(overrides = {}) {
   };
 }
 
-test("configuration requires the Groq API key and uses the default model", () => {
+test("configuration requires the OpenAI API key and uses the default model", () => {
   const missing = getAIConfiguration({});
-  assert.deepEqual(missing.missing, ["GROQ_API_KEY"]);
-  assert.equal(missing.model, "openai/gpt-oss-20b");
+  assert.deepEqual(missing.missing, ["OPENAI_API_KEY"]);
+  assert.equal(missing.model, "gpt-6-luna");
 
   const configured = getAIConfiguration(apiEnv);
   assert.deepEqual(configured.missing, []);
-  assert.equal(configured.model, "openai/gpt-oss-20b");
+  assert.equal(configured.model, "gpt-6-luna");
   assert.equal(configured.apiKey, "test-key");
 });
 
-test("an unconfigured Groq key reports requirements and cannot analyze", async () => {
+test("an unconfigured OpenAI key reports requirements and cannot analyze", async () => {
   const analyzer = createAIAnalyzer({});
   assert.equal(analyzer.status().ready, false);
-  assert.deepEqual(analyzer.status().missing, ["GROQ_API_KEY"]);
-  assert.equal(analyzer.status().provider, "Groq API");
+  assert.deepEqual(analyzer.status().missing, ["OPENAI_API_KEY"]);
+  assert.equal(analyzer.status().provider, "OpenAI API");
 
   await assert.rejects(analyzer.analyze({
     driverName: "Ana",
@@ -58,7 +57,7 @@ test("an unconfigured Groq key reports requirements and cannot analyze", async (
   }), error => error.code === "AI_NOT_CONFIGURED");
 });
 
-test("Groq receives minimized messages and requests JSON output", async () => {
+test("OpenAI receives minimized messages and requests strict JSON output", async () => {
   let requestUrl;
   let requestPayload;
   let authorization;
@@ -68,7 +67,7 @@ test("Groq receives minimized messages and requests JSON output", async () => {
     authorization = new Headers(options.headers).get("authorization");
     requestPayload = JSON.parse(options.body);
 
-    return groqResponse({
+    return openAIResponse({
       rides: [{
         anchorIndex: 0,
         messageIndices: [0],
@@ -95,9 +94,10 @@ test("Groq receives minimized messages and requests JSON output", async () => {
 
   const serializedRequest = JSON.stringify(requestPayload);
 
-  assert.equal(requestUrl, "https://api.groq.com/openai/v1/chat/completions");
+  assert.equal(requestUrl, "https://api.openai.com/v1/chat/completions");
   assert.equal(authorization, "Bearer test-key");
-  assert.equal(requestPayload.model, "openai/gpt-oss-20b");
+  assert.equal(requestPayload.model, "gpt-6-luna");
+  assert.equal(requestPayload.reasoning_effort, "none");
 
   assert.equal(requestPayload.response_format.type, "json_schema");
   assert.equal(
@@ -120,10 +120,10 @@ test("Groq receives minimized messages and requests JSON output", async () => {
   assert.doesNotMatch(serializedRequest, /Ana Souza|João Silva|Rua das Flores|98765-4321/);
   assert.equal(result.rides[0].amountCents, 1800);
   assert.equal(result.summary.confirmedRevenueCents, 1800);
-  assert.equal(result.provider, "Groq API");
+  assert.equal(result.provider, "OpenAI API");
 });
 
-test("Groq JSON completion is mapped into the CRM result format", async () => {
+test("OpenAI JSON completion is mapped into the CRM result format", async () => {
   const expected = {
     rides: [],
     unresolved: [],
@@ -133,7 +133,7 @@ test("Groq JSON completion is mapped into the CRM result format", async () => {
     }],
   };
 
-  const analyzer = createAIAnalyzer(apiEnv, async () => groqResponse(expected));
+  const analyzer = createAIAnalyzer(apiEnv, async () => openAIResponse(expected));
 
   const result = await analyzer.analyze({
     driverName: "Ana Souza",
@@ -143,11 +143,11 @@ test("Groq JSON completion is mapped into the CRM result format", async () => {
   });
 
   assert.deepEqual(result.unclassified, expected.unclassified);
-  assert.equal(result.provider, "Groq API");
-  assert.equal(result.model, "openai/gpt-oss-20b");
+  assert.equal(result.provider, "OpenAI API");
+  assert.equal(result.model, "gpt-6-luna");
 });
 
-test("empty Groq response fails without inventing results", async () => {
+test("empty OpenAI response fails without inventing results", async () => {
   const analyzer = createAIAnalyzer(apiEnv, async () => new Response(
     JSON.stringify({
       id: "empty-completion",
@@ -164,7 +164,7 @@ test("empty Groq response fails without inventing results", async () => {
     driverName: "Ana",
     messages: [sampleMessage({ body: "Texto para análise" })],
   }), error => (
-    error.code === "GROQ_INVALID_RESPONSE"
+    error.code === "OPENAI_INVALID_RESPONSE"
     && error.statusCode === 502
   ));
 });
@@ -174,7 +174,7 @@ test("messages outside the period are sent only as non-classifiable boundary con
 
   const analyzer = createAIAnalyzer(apiEnv, async (_url, options) => {
     requestPayload = JSON.parse(options.body);
-    return groqResponse(emptyResult);
+    return openAIResponse(emptyResult);
   });
 
   const result = await analyzer.analyze({
@@ -219,8 +219,8 @@ test("messages outside the period are sent only as non-classifiable boundary con
   assert.equal(result.unresolved[0].anchorIndex, 1);
 });
 
-test("messages omitted by Groq are returned for human review", async () => {
-  const analyzer = createAIAnalyzer(apiEnv, async () => groqResponse(emptyResult));
+test("messages omitted by OpenAI are returned for human review", async () => {
+  const analyzer = createAIAnalyzer(apiEnv, async () => openAIResponse(emptyResult));
 
   const result = await analyzer.analyze({
     driverName: "Ana",
@@ -238,7 +238,7 @@ test("messages omitted by Groq are returned for human review", async () => {
   assert.match(result.unresolved[0].reason, /não classificou esta mensagem/);
 });
 
-test("Groq authentication failures stay explicit without exposing credentials", async () => {
+test("OpenAI authentication failures stay explicit without exposing credentials", async () => {
   const analyzer = createAIAnalyzer(apiEnv, async () => new Response(
     JSON.stringify({
       error: { message: "Invalid API key test-key" },
@@ -250,13 +250,13 @@ test("Groq authentication failures stay explicit without exposing credentials", 
     driverName: "Ana",
     messages: [sampleMessage({ body: "Corrida 18 reais" })],
   }), error => (
-    error.code === "GROQ_AUTH_ERROR"
-    && error.message.includes("GROQ_API_KEY")
+    error.code === "OPENAI_AUTH_ERROR"
+    && error.message.includes("OPENAI_API_KEY")
     && !error.message.includes("test-key")
   ));
 });
 
-test("Groq retries HTTP 503 with progressive delays using only the configured model", async () => {
+test("OpenAI retries HTTP 503 with progressive delays using only the configured model", async () => {
   let attempts = 0;
   const delays = [];
 
@@ -264,7 +264,7 @@ test("Groq retries HTTP 503 with progressive delays using only the configured mo
     apiEnv,
     async (_url, options) => {
       attempts += 1;
-      assert.equal(JSON.parse(options.body).model, "openai/gpt-oss-20b");
+      assert.equal(JSON.parse(options.body).model, "gpt-6-luna");
 
       if (attempts < 3) {
         return new Response(
@@ -273,7 +273,7 @@ test("Groq retries HTTP 503 with progressive delays using only the configured mo
         );
       }
 
-      return groqResponse(emptyResult);
+      return openAIResponse(emptyResult);
     },
     {
       retryDelaysMs: [1000, 2000],
@@ -288,10 +288,10 @@ test("Groq retries HTTP 503 with progressive delays using only the configured mo
 
   assert.equal(attempts, 3);
   assert.deepEqual(delays, [1000, 2000]);
-  assert.equal(result.model, "openai/gpt-oss-20b");
+  assert.equal(result.model, "gpt-6-luna");
 });
 
-test("Groq reports the final HTTP 503 after bounded retries", async () => {
+test("OpenAI reports the final HTTP 503 after bounded retries", async () => {
   let attempts = 0;
 
   const analyzer = createAIAnalyzer(
@@ -314,7 +314,7 @@ test("Groq reports the final HTTP 503 after bounded retries", async () => {
     messages: [sampleMessage({ body: "Texto para análise" })],
   }), error => (
     error.statusCode === 503
-    && error.code === "GROQ_PROVIDER_ERROR"
+    && error.code === "OPENAI_PROVIDER_ERROR"
     && error.message.includes("service overloaded")
   ));
 

@@ -284,10 +284,10 @@ test("API failures are explicit and invalid message references are rejected", as
       driverName: "Motorista",
       driver: { id: 8, nome: "Motorista" },
     }, async () => new Response(
-      JSON.stringify({ error: "Configure GEMINI_API_KEY." }),
+JSON.stringify({ error: "Configure OPENAI_API_KEY." }),
       { status: 503, headers: { "Content-Type": "application/json" } },
     )),
-    /Configure GEMINI_API_KEY/,
+    /OPENAI_API_KEY/
   );
 
   await assert.rejects(

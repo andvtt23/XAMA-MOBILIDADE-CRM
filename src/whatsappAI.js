@@ -111,7 +111,7 @@ function makeCandidate(item, messages, driver, source) {
     hasRideContext: true,
     analysisStatus: cancellation ? "cancelled" : reviewReason ? "pending" : "confirmed",
     confirmed: !reviewReason && status === "confirmed",
-    confirmationSignal: "análise contextual pelo Google Gemini",
+    confirmationSignal: "análise contextual pela OpenAI Luna",
     classification: cancellation ? "cancelamento" : "corrida",
     analysisSource: source,
     analysisConfidence: confidence,
@@ -184,7 +184,7 @@ export async function analyzeWhatsAppExport({
       if (event.type === "progress") {
         onProgress(event);
       } else if (event.type === "error") {
-        throw new Error(event.error || "A análise do Gemini falhou.");
+      throw new Error(event.error || "A análise do Gemini falhou.");
       } else if (event.type === "result") {
         resultPayload = event.result;
       } else {
@@ -209,7 +209,7 @@ export async function analyzeWhatsAppExport({
     || !Array.isArray(payload.unresolved)
     || !Array.isArray(payload.unclassified)
   ) {
-    throw new Error("A API do Gemini retornou uma análise incompleta.");
+ throw new Error("A API da Luna retornou uma análise incompleta.");
   }
 
   const sourceByIndex = new Map(indexedMessages.map(message => [message.index, message]));
