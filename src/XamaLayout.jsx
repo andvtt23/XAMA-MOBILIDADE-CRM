@@ -88,12 +88,12 @@ function CartaoMotorista({
         <span className="xama-import-status" role="status">
           {aiStatus.manualFallback
             ? "Última importação analisada localmente; confira os itens antes de aprovar."
-            : `IA Gemini: ${aiStatus.loading
+            : `IA OpenAI: ${aiStatus.loading
             ? "consultando configuração…"
             : aiStatus.error
               ? aiStatus.error
               : !aiStatus.ready
-                ? `não configurada; configure ${aiStatus.missing.join(" e ") || "GEMINI_API_KEY"} no .env.`
+                ? `não configurada; configure ${aiStatus.missing.join(" e ") || "OPENAI_API_KEY"} no .env.`
                 : aiStatus.connected
                   ? `conectada · ${aiStatus.model}`
                   : `configurada · ${aiStatus.model}; conexão ainda não verificada`}`}
@@ -184,12 +184,12 @@ function CartaoMotorista({
             <p role="status">
               {importPreview.conversations.some(conversation => conversation.analysisMode === "manual")
                 ? "Modo manual ativo: os itens exigem revisão e aprovação antes de entrar no fechamento."
-                : `IA Gemini: ${aiStatus.loading
+                : `IA OpenAI: ${aiStatus.loading
                 ? "consultando configuração…"
                 : aiStatus.error
                   ? aiStatus.error
                   : !aiStatus.ready
-                    ? `não configurada; configure ${aiStatus.missing.join(" e ") || "GEMINI_API_KEY"} no .env.`
+                    ? `não configurada; configure ${aiStatus.missing.join(" e ") || "OPENAI_API_KEY"} no .env.`
                     : aiStatus.connected
                       ? `conectada · ${aiStatus.model} · última chamada concluída com sucesso`
                       : `configurada · ${aiStatus.model} · conexão será verificada na análise real`}`}
@@ -212,7 +212,7 @@ function CartaoMotorista({
                 {conversation.analysisMode === "manual" && (
                   <>
                     <p className="nota-importacao">
-                      Análise local sem Gemini ({conversation.manualFailureReason}). Nenhum item será confirmado automaticamente.
+                      Análise local sem OpenAI ({conversation.manualFailureReason}). Nenhum item será confirmado automaticamente.
                     </p>
                     {conversation.mensagens?.length > 0 && (
                       <details>

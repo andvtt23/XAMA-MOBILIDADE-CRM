@@ -312,3 +312,37 @@ JSON.stringify({ error: "Configure OPENAI_API_KEY." }),
     /mensagens que não existem/,
   );
 });
+
+
+test("auditoria identifica tarifas sem corrida vinculada sem aprovar automaticamente", async () => {
+  const source = [
+    "25/10/2026 10:00 - Central Xama: Corrida Centro para Vila Nova",
+    "25/10/2026 10:01 - Central Xama: 17 reais",
+    "25/10/2026 10:02 - Motorista: Ok",
+    "25/10/2026 11:00 - Motorista: Anota 16 reais pra mim",
+  ].join("\n");
+
+  const result = await analyzeWhatsAppExport({
+    text: source,
+    driverName: "Motorista",
+    driver: { id: 8, nome: "Motorista" },
+  }, fetchResponse({
+    rides: [{
+      anchorIndex: 0,
+      messageIndices: [0, 1, 2],
+      amountCents: 1700,
+      status: "confirmed",
+      reason: "Corrida aceita.",
+      confidence: 0.96,
+    }],
+    unresolved: [],
+    unclassified: [],
+    summary: {},
+    model: "local-test",
+  }));
+
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.fareMessagesWithoutRide.length, 1);
+  assert.equal(result.fareMessagesWithoutRide[0].amountCents, 1600);
+  assert.equal(result.candidates[0].confirmed, true);
+});

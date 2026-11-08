@@ -14,9 +14,7 @@ services:
         sync: false
       - key: INITIAL_ADMIN_PASSWORD
         sync: false
-      - key: GEMINI_API_KEY
+      - key: OPENAI_API_KEY
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-3.5-flash-lite
-      - key: GEMINI_API_MODE
-        value: generateContent
+      - key: OPENAI_MODEL
+        value: gpt-6-luna

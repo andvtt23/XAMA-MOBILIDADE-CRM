@@ -829,7 +829,7 @@ function CRMApplication({
             ready: false,
             connected: false,
             missing: [],
-            error: `Não foi possível consultar a API do Gemini: ${error.message}`,
+            error: `Não foi possível consultar a API da OpenAI: ${error.message}`,
           });
         }
       });
@@ -1344,12 +1344,15 @@ function CRMApplication({
             foraDoPeriodo: 0,
           };
 
-          if (existingSignatures.has(signature) || batchSignatures.has(signature)) {
-            conversation.erro = "Conversa já importada neste CRM ou repetida no lote.";
+                   conversation.reanalise = existingSignatures.has(signature);
+
+          if (batchSignatures.has(signature)) {
+            conversation.erro = "Conversa repetida no lote selecionado.";
             conversation.duplicada = true;
             conversations.push(conversation);
             continue;
           }
+
           batchSignatures.add(signature);
 
           if (messages.length === 0) {
@@ -1375,7 +1378,7 @@ function CRMApplication({
             }, {
               onProgress: progress => {
                 const message = progress.totalChunks
-                  ? `Gemini: ${progress.stage === "preparing" ? "preparando" : "analisando"} parte ${progress.completedChunks}/${progress.totalChunks} · ${progress.messagesAnalyzed} mensagens do período.`
+                  ? `IA Luna: ${progress.stage === "preparing" ? "preparando" : "analisando"} parte ${progress.completedChunks}/${progress.totalChunks} · ${progress.messagesAnalyzed} mensagens do período.`
                   : `Preparando análise anonimizada de ${progress.messagesAnalyzed} mensagem(ns)…`;
                 if (motoristaForcado) {
                   setMensagensImportacaoMotoristas(previous => ({
@@ -1390,6 +1393,8 @@ function CRMApplication({
             candidates = analysis.candidates;
             conversation.aiSummary = analysis.summary;
             conversation.aiUnclassified = analysis.unclassified;
+            conversation.aiFareAudit =
+  analysis.fareMessagesWithoutRide ?? [];
             setAiStatus(previous => ({
               ...previous,
               loading: false,
@@ -1398,49 +1403,30 @@ function CRMApplication({
               error: "",
               manualFallback: false,
               model: analysis.summary.model,
-              provider: "Google Gemini API",
+             provider: "OpenAI API",
             }));
-          } catch (error) {
+                    } catch (error) {
             const failureReason = error instanceof Error
               ? error.message
-              : "Falha desconhecida ao consultar o Gemini.";
+              : "Falha desconhecida ao consultar a OpenAI.";
             setAiStatus(previous => ({
               ...previous,
               loading: false,
               connected: false,
               error: failureReason,
-              manualFallback: true,
+              manualFallback: false,
             }));
-            const localAnalysis = analyzeWhatsAppExportLocally({
-              text: textFile.text,
-              drivers: motoristas,
-              driverId: conversation.motorista.driverId,
-              periodStart: motoristaForcado?.periodStart ?? null,
-              periodEnd: motoristaForcado?.periodEnd ?? null,
-            });
-            candidates = localAnalysis.candidates;
-            conversation.analysisMode = "manual";
-            conversation.manualFailureReason = failureReason;
-            conversation.mensagens = localAnalysis.messages.map(message => ({
-              date: message.date,
-              time: message.time,
-              sender: message.sender,
-              body: message.body,
-              isSystem: Boolean(message.isSystem),
-            }));
-            conversation.foraDoPeriodo = localAnalysis.outsidePeriod;
-            if (candidates.length === 0) {
-              conversation.aviso = "Nenhuma corrida potencial foi identificada; as mensagens originais serão preservadas no histórico.";
-            }
+            conversation.erro = `Falha na análise pela OpenAI: ${failureReason}`;
+            conversations.push(conversation);
+            continue;
           }
           if (conversation.analysisMode !== "manual") conversation.foraDoPeriodo = 0;
-          const fingerprintsInConversation = new Set();
+                const fingerprintsInConversation = new Set();
           for (const candidate of candidates) {
             if (
               fingerprintsInConversation.has(candidate.fingerprint)
               || batchRideFingerprints.has(candidate.fingerprint)
             ) {
-              conversation.duplicada = true;
               continue;
             }
             fingerprintsInConversation.add(candidate.fingerprint);
@@ -1457,8 +1443,8 @@ function CRMApplication({
             const tripKey = `${candidate.date}|${candidate.driverId}|${candidate.identity}`;
             const batchExisting = candidate.hasTripId ? batchTripRides.get(tripKey) : null;
             const duplicateRide = existing ?? batchExisting;
+
             if (duplicateRide && rideAmountInCents(duplicateRide) === candidate.amountCents) {
-              conversation.duplicada = true;
               continue;
             }
 
@@ -3098,12 +3084,12 @@ function CRMApplication({
                 <p role="status">
                   {preImportacao.conversations.some(conversation => conversation.analysisMode === "manual")
                     ? "Modo manual ativo: a análise local continua disponível; todos os candidatos aguardam revisão e aprovação."
-                    : `IA Gemini: ${aiStatus.loading
+                    : `IA Luna — ChatGPT 6: ${aiStatus.loading
                     ? "consultando configuração…"
                     : aiStatus.error
                       ? aiStatus.error
                       : !aiStatus.ready
-                        ? `não configurada; configure ${aiStatus.missing.join(" e ") || "GEMINI_API_KEY"} no .env.`
+                        ? `não configurada; configure ${aiStatus.missing.join(" e ") || "OPENAI_API_KEY"} no .env.`
                         : aiStatus.connected
                           ? `conectada · ${aiStatus.model} · última chamada concluída com sucesso`
                           : `configurada · ${aiStatus.model} · conexão será verificada na análise real`}`}
@@ -3133,7 +3119,7 @@ function CRMApplication({
                     {conversation.analysisMode === "manual" && (
                       <>
                         <p className="nota-importacao">
-                          Análise local sem Gemini. Motivo: {conversation.manualFailureReason}.
+                          Análise local sem IA. Motivo: {conversation.manualFailureReason}.
                           Revise cada item; nenhum entra no fechamento antes da aprovação manual.
                         </p>
                         {conversation.mensagens?.length > 0 && (
@@ -3156,14 +3142,36 @@ function CRMApplication({
                         {conversation.motorista.driverName ? ` — ${conversation.motorista.driverName}` : " — pendente"}
                       </p>
                     )}
-                    {conversation.aiSummary && (
-                      <p>
-                        IA {conversation.aiSummary.model}: {conversation.aiSummary.confirmed} confirmada(s),{" "}
-                        {conversation.aiSummary.cancelled} cancelada(s), {conversation.aiSummary.pending} pendente(s),{" "}
-                        {conversation.aiSummary.unclassified} grupo(s) sem corrida identificada ·{" "}
-                        faturamento confirmado {dinheiroComPrefixo(conversation.aiSummary.confirmedRevenueCents / 100)}.
-                      </p>
-                    )}
+                   {conversation.aiSummary && (
+  <p>
+    IA {conversation.aiSummary.model}: {conversation.aiSummary.confirmed} confirmada(s),{" "}
+    {conversation.aiSummary.cancelled} cancelada(s), {conversation.aiSummary.pending} pendente(s),{" "}
+    {conversation.aiSummary.unclassified} grupo(s) sem corrida identificada ·{" "}
+    faturamento confirmado{" "}
+    {dinheiroComPrefixo(conversation.aiSummary.confirmedRevenueCents / 100)}.
+  </p>
+)}
+
+{conversation.aiFareAudit?.length > 0 && (
+  <details className="xama-ai-audit">
+    <summary>
+      Auditoria inteligente: {conversation.aiFareAudit.length} mensagem(ns) com valor sem corrida vinculada
+    </summary>
+    <p>
+      Estas mensagens não foram contabilizadas. Confira se representam
+      corridas que a primeira análise não identificou. Nenhuma será
+      aprovada automaticamente.
+    </p>
+    <ul>
+      {conversation.aiFareAudit.map((item, index) => (
+        <li key={`${conversation.id}-fare-audit-${item.messageIndex}-${index}`}>
+          {item.date} {item.time} · {item.sender} ·{" "}
+          {dinheiroComPrefixo(item.amountCents / 100)} — {item.body}
+        </li>
+      ))}
+    </ul>
+  </details>
+)}
                     {conversation.aiUnclassified?.length > 0 && (
                       <details>
                         <summary>

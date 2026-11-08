@@ -88,9 +88,12 @@ function makeCandidate(item, messages, driver, source) {
     `[${message.date} ${message.time} · ${message.sender}] ${message.body}`
   )).join("\n");
   const identity = `ai:${date}:${time}:${fingerprintFile(
-    `${anchor?.sender ?? ""}:${anchor?.body ?? ""}:${tripNumber}`,
+    `${anchor?.sender ?? ""}:${anchor?.body ?? ""}:${tripNumber}:${sourceMessageIndexes
+      .slice()
+      .sort((a, b) => a - b)
+      .join(",")}`,
   )}`;
-  const text = [
+    const text = [
     item.routeSummary ? `Trecho: ${item.routeSummary}` : "",
     `Justificativa da IA: ${rationale}`,
     `Confiança: ${Math.round(confidence * 100)}%`,
@@ -184,7 +187,7 @@ export async function analyzeWhatsAppExport({
       if (event.type === "progress") {
         onProgress(event);
       } else if (event.type === "error") {
-      throw new Error(event.error || "A análise do Gemini falhou.");
+      throw new Error(event.error || "A análise da IA Luna falhou.");
       } else if (event.type === "result") {
         resultPayload = event.result;
       } else {
@@ -251,7 +254,7 @@ export async function analyzeWhatsAppExport({
     const duplicatedAnchor = seenAnchors.has(anchorKey);
     seenAnchors.add(anchorKey);
     const evidence = item.messageIndices.map(messageIndex => sourceByIndex.get(messageIndex));
-    const candidate = makeCandidate(item, sourceByIndex, driver, "ia-local");
+   const candidate = makeCandidate(item, sourceByIndex, driver, "openai");
     if (duplicatedAnchor) {
       candidate.confirmed = false;
       candidate.analysisStatus = "pending";
@@ -265,6 +268,33 @@ export async function analyzeWhatsAppExport({
     return candidate;
   });
 
+    // AUDITORIA INTELIGENTE: tarifas não vinculadas a corridas
+  // Não cria nem aprova corridas automaticamente.
+  const referencedMessageIndexes = new Set(
+    items.flatMap(item => item.messageIndices)
+  );
+
+  const fareMessagesWithoutRide = indexedMessages
+    .filter(message => (
+      (!periodStart || message.date >= periodStart)
+      && (!periodEnd || message.date <= periodEnd)
+      && !referencedMessageIndexes.has(message.index)
+    ))
+    .map(message => ({
+      message,
+      fare: parseAmount(message.body),
+    }))
+    .filter(({ fare }) => fare.amountCents !== null)
+    .map(({ message, fare }) => ({
+      date: message.date,
+      time: message.time,
+      sender: message.sender,
+      body: message.body,
+      amountCents: fare.amountCents,
+      messageIndex: message.index,
+      reason:
+        "Valor encontrado sem corrida vinculada. Verificar se é corrida, anotação, consulta ou duplicidade.",
+    }));
   const unclassified = payload.unclassified.map(item => {
     if (
       !item
@@ -295,5 +325,10 @@ export async function analyzeWhatsAppExport({
       .reduce((sum, candidate) => sum + (candidate.amountCents ?? 0), 0),
     model: payload.model,
   };
-  return { candidates, summary, unclassified };
+  return {
+  candidates,
+  summary,
+  unclassified,
+  fareMessagesWithoutRide,
+};
 }

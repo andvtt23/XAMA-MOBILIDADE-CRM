@@ -179,22 +179,35 @@ export function automaticCommission(driver, rideCount) {
     : 15;
 }
 
+function getRideAmountCents(ride) {
+  const rawAmount = ride.amountCents
+    ?? ride.valorCentavos
+    ?? Math.round(Number(ride.amount ?? ride.valor ?? 0) * 100);
+
+  const amountCents = Number(rawAmount);
+
+  return Number.isSafeInteger(amountCents) && amountCents > 0
+    ? amountCents
+    : 0;
+}
+
 export function calculateWeeklyRideTotals(rides, driver, start, end) {
   const driverRides = rides.filter(ride => (
     ride.excludedFromTotals !== true
     && String(ride.driverId ?? ride.motoristaId) === String(driver.id)
     && (ride.date ?? ride.data) >= start
     && (ride.date ?? ride.data) <= end
+    && getRideAmountCents(ride) > 0
   ));
-  const revenueCents = driverRides.reduce((sum, ride) => (
-    sum + Number(
-      ride.amountCents
-      ?? ride.valorCentavos
-      ?? Math.round(Number(ride.amount ?? ride.valor ?? 0) * 100),
-    )
-  ), 0);
+
+  const revenueCents = driverRides.reduce(
+    (sum, ride) => sum + getRideAmountCents(ride),
+    0,
+  );
+
   const rate = automaticCommission(driver, driverRides.length);
   const commissionCents = Math.round(revenueCents * rate / 100);
+
   return {
     count: driverRides.length,
     revenueCents,
@@ -205,28 +218,39 @@ export function calculateWeeklyRideTotals(rides, driver, start, end) {
 }
 
 export function allocateCommissionCents(rides, rate) {
-  const amounts = rides.map(ride => Number(
-    ride.amountCents
-    ?? ride.valorCentavos
-    ?? Math.round(Number(ride.amount ?? ride.valor ?? 0) * 100),
-  ));
+  const amounts = rides.map(getRideAmountCents);
+
   const totalCommissionCents = Math.round(
     amounts.reduce((sum, amount) => sum + amount, 0) * rate / 100,
   );
+
   const allocations = amounts.map((amount, index) => {
     const exact = amount * rate / 100;
     const base = Math.floor(exact);
-    return { index, cents: base, fraction: exact - base };
+
+    return {
+      index,
+      cents: base,
+      fraction: exact - base,
+    };
   });
-  let remainder = totalCommissionCents - allocations.reduce((sum, item) => sum + item.cents, 0);
-  const priority = [...allocations].sort(
-    (left, right) => right.fraction - left.fraction || left.index - right.index,
+
+  let remainder = totalCommissionCents - allocations.reduce(
+    (sum, item) => sum + item.cents,
+    0,
   );
+
+  const priority = [...allocations].sort(
+    (left, right) => right.fraction - left.fraction
+      || left.index - right.index,
+  );
+
   for (const item of priority) {
     if (remainder <= 0) break;
     allocations[item.index].cents += 1;
     remainder -= 1;
   }
+
   return allocations.map(item => item.cents);
 }
 
@@ -437,10 +461,10 @@ function writtenCurrencyAmounts(text) {
 }
 
 export function parseAmount(text) {
+  const matches = [];
   const currencyPattern = /R\$\s*((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?)/gi;
   const contextPattern = /(?:valor(?:\s+da\s+corrida)?|total(?:\s+da\s+corrida)?|pagou|recebeu|anota|lan[cç]a(?:r)?)\s*(?:e|é|:|-)?\s*(?:R\$\s*)?((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?)/gi;
-  const suffixPattern = /((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?)\s*(?:real|reais|BRL)\b/gi;
-  const matches = [];
+const suffixPattern = /((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?)\s*(?:real|reais|reaus|BRL)\b/gi;
 
   const numericPattern = "(?:\\d{1,3}(?:\\.\\d{3})+|\\d+)(?:[,.]\\d{1,2})?";
   for (const pattern of [currencyPattern, contextPattern, suffixPattern]) {
