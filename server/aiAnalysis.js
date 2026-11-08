@@ -453,7 +453,15 @@ function makePrompt(periodStart, periodEnd, messages) {
 
     "23. REVISÃO RESPONSÁVEL: quando houver mais de uma interpretação possível, não escolha arbitrariamente. Encaminhe para unresolved e explique exatamente qual informação está faltando.",
 
-    "24. REGRA FINAL: sua prioridade é identificar corretamente todas as corridas que a conversa sustenta, sem omissões injustificadas, sem duplicações e sem invenções. Seja inteligente na interpretação e rigorosa na comprovação.",
+    "24. RACIOCÍNIO OPERACIONAL OBRIGATÓRIO: antes de montar o JSON, faça internamente estas etapas: (a) percorra as mensagens centrais em ordem cronológica; (b) identifique eventos candidatos a corrida; (c) agrupe mensagens que falam do mesmo evento usando remetente, tempo, sequência, valor e referências linguísticas; (d) separe eventos distintos mesmo quando compartilham a mesma mensagem; (e) atribua um tripNumber estável e diferente para cada corrida originada da mesma âncora; (f) associe cada tarifa a no máximo uma corrida; (g) resolva correções e cancelamentos; (h) confira a cobertura de todos os índices centrais; (i) confira duplicidades e conflitos antes de responder. Não pule diretamente da identificação de valores para a criação de corridas.",
+
+    "25. CONTROLE DE CONTAGEM: mantenha internamente um registro de cada evento de corrida identificado. Uma mensagem pode conter zero, uma ou várias corridas. Não transforme a soma de valores em quantidade de corridas. Expressões como 'duas', 'mais uma', listas de tarifas separadas e referências a corridas anteriores devem ser interpretadas no contexto. Se houver evidência de duas corridas, retorne dois objetos; não compacte em um objeto só. Se a quantidade for incerta, registre a dúvida em unresolved em vez de adivinhar.",
+
+    "26. AUDITORIA DE EVIDÊNCIAS: para cada corrida, verifique se anchorIndex é uma mensagem central e se messageIndices contém a anotação e as mensagens de apoio realmente relacionadas. Verifique se o valor está escrito ou é confirmado pelas mensagens citadas. Não reutilize a mesma mensagem de tarifa como prova de duas corridas, salvo quando a própria mensagem indicar explicitamente múltiplas tarifas/corridas.",
+
+    "27. VERIFICAÇÃO FINAL: antes de responder, compare todos os índices centrais com a classificação produzida. Nenhum índice pode desaparecer. Uma mensagem pode apoiar mais de uma corrida apenas quando registra explicitamente múltiplas corridas. Confirme também que corridas distintas da mesma âncora possuem tripNumber diferentes e que a mesma corrida não aparece duas vezes com status ou valor divergente. Conflitos devem ir para unresolved.",
+
+    "28. REGRA FINAL: sua prioridade é identificar corretamente todas as corridas que a conversa sustenta, sem omissões injustificadas, sem duplicações e sem invenções. Seja inteligente na interpretação e rigorosa na comprovação.",
 
     "FORMATO: retorne exclusivamente JSON válido conforme o schema. Não escreva markdown, explicações externas ou propriedades adicionais."
   ].join("\n");
@@ -605,7 +613,10 @@ export function createAIAnalyzer(
       const unresolved = [];
       const unclassified = [];
 
-      const seenRides = new Set();
+      // A identidade da corrida não pode depender de status/valor: uma resposta
+      // repetida em outro lote pode trazer esses campos diferentes e duplicar o evento.
+      // Âncora + número da corrida preserva corridas múltiplas na mesma mensagem.
+      const seenRides = new Map();
       const seenUnresolved = new Set();
       const seenUnclassified = new Set();
 
@@ -836,12 +847,47 @@ export function createAIAnalyzer(
             );
           }
 
-          const key =
-            `${ride.anchorIndex}|${ride.tripNumber ?? "1"}|${ride.status}|${ride.amountCents ?? "null"}`;
+          const key = `${ride.anchorIndex}|${ride.tripNumber ?? "1"}`;
+          const previous = seenRides.get(key);
 
-          if (!seenRides.has(key)) {
-            seenRides.add(key);
+          if (!previous) {
+            seenRides.set(key, ride);
             rides.push(ride);
+            continue;
+          }
+
+          // Mesma corrida repetida por causa da sobreposição dos lotes:
+          // juntar evidências, sem criar outra corrida.
+          const sameDecision = previous.status === ride.status
+            && previous.amountCents === ride.amountCents;
+          if (sameDecision) {
+            previous.messageIndices = [...new Set([
+              ...previous.messageIndices,
+              ...ride.messageIndices,
+            ])];
+            previous.evidence = previous.messageIndices
+              .map(index => chunkMessages.get(index))
+              .filter(Boolean);
+            continue;
+          }
+
+          // Se dois lotes discordarem sobre a mesma identidade, não escolher
+          // silenciosamente uma versão: encaminhar para revisão.
+          const conflictKey = `${ride.anchorIndex}|${ride.anchorIndex}`;
+          if (!seenUnresolved.has(conflictKey)) {
+            seenUnresolved.add(conflictKey);
+            unresolved.push({
+              anchorIndex: ride.anchorIndex,
+              messageIndices: [...new Set([
+                ...previous.messageIndices,
+                ...ride.messageIndices,
+              ])],
+              date: ride.date,
+              time: ride.time,
+              amountCents: null,
+              reason: "A análise encontrou interpretações conflitantes para a mesma corrida entre lotes; revisar antes de aprovar.",
+              confidence: 0,
+            });
           }
         }
 

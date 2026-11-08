@@ -141,82 +141,85 @@ export async function analyzeWhatsAppExport({
   const onProgress = typeof options === "function" ? () => {} : options.onProgress ?? (() => {});
   const messages = parseWhatsAppMessages(text);
   const indexedMessages = messages.map((message, index) => ({ index, ...message }));
+  
   onProgress({ stage: "sending", completedChunks: 0, totalChunks: 0, messagesAnalyzed: indexedMessages.length });
-  const response = await fetchImpl("/api/whatsapp/analyze", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/x-ndjson",
-    },
-    body: JSON.stringify({
-      driverName,
-      periodStart: periodStart || null,
-      periodEnd: periodEnd || null,
-      messages: indexedMessages,
-    }),
-  });
-  if (!response.ok) {
-    let errorPayload;
-    try {
-      errorPayload = await response.json();
-    } catch {
-      throw new Error(`O backend respondeu HTTP ${response.status} sem uma mensagem de erro válida.`);
-    }
-    throw new Error(errorPayload.error || `O backend respondeu HTTP ${response.status}.`);
-  }
-  if (!response.body) {
-    throw new Error("O backend não disponibilizou o fluxo de progresso da análise.");
-  }
+  
+const response = await fetchImpl("/api/whatsapp/analyze", {
+  method: "POST",
+  credentials: "same-origin",
+  headers: {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  },
+  body: JSON.stringify({
+    driverName,
+    periodStart: periodStart || null,
+    periodEnd: periodEnd || null,
+    messages: indexedMessages,
+  }),
+});
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let resultPayload = null;
-  async function processLines(final = false) {
-    const lines = buffer.split("\n");
-    buffer = final ? "" : lines.pop() ?? "";
-    if (final && lines.at(-1) === "") lines.pop();
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        throw new Error("O backend enviou um evento de progresso inválido.");
-      }
-      if (event.type === "progress") {
-        onProgress(event);
-      } else if (event.type === "error") {
-      throw new Error(event.error || "A análise da IA Luna falhou.");
-      } else if (event.type === "result") {
-        resultPayload = event.result;
-      } else {
-        throw new Error("O backend enviou um tipo de evento desconhecido.");
-      }
-    }
-  }
+if (!response.ok) {
+  let errorPayload;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-      await processLines(done);
-      if (done) break;
-    }
-  } finally {
-    reader.releaseLock();
+    errorPayload = await response.json();
+  } catch {
+    throw new Error(
+      `O backend respondeu HTTP ${response.status} sem mensagem válida.`
+    );
   }
-  const payload = resultPayload;
-  if (
-    !payload
-    || !Array.isArray(payload.rides)
-    || !Array.isArray(payload.unresolved)
-    || !Array.isArray(payload.unclassified)
-  ) {
- throw new Error("A API da Luna retornou uma análise incompleta.");
+  throw new Error(
+    errorPayload.error || `O backend respondeu HTTP ${response.status}.`
+  );
+}
+
+let payload;
+const contentType = response.headers.get("content-type") || "";
+
+if (contentType.includes("application/x-ndjson")) {
+  const raw = await response.text();
+  const events = raw
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => JSON.parse(line));
+
+  const errorEvent = events.find(event => event.type === "error");
+  if (errorEvent) {
+    throw new Error(errorEvent.error || "Erro na análise da IA.");
   }
 
-  const sourceByIndex = new Map(indexedMessages.map(message => [message.index, message]));
-  const items = [
+  const resultEvent = events.find(event => event.type === "result");
+
+  if (!resultEvent || !resultEvent.result) {
+    throw new Error("A IA não retornou um resultado completo.");
+  }
+
+  payload = resultEvent.result;
+} else {
+  const json = await response.json();
+
+  if (json?.type === "error") {
+    throw new Error(json.error || "Erro na análise da IA.");
+  }
+
+  payload = json?.type === "result" ? json.result : json;
+}
+
+if (
+  !payload ||
+  !Array.isArray(payload.rides) ||
+  !Array.isArray(payload.unresolved)
+) {
+  throw new Error("A API da OpenAI retornou uma análise incompleta.");
+}
+
+payload.unclassified = Array.isArray(payload.unclassified)
+  ? payload.unclassified
+  : [];
+  const sourceByIndex = new Map(
+  indexedMessages.map(message => [message.index, message])
+);
+const items = [
     ...payload.rides,
     ...payload.unresolved.map(item => ({ ...item, status: "pending" })),
   ];
