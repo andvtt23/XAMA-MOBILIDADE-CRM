@@ -847,8 +847,11 @@ export function createAIAnalyzer(
             );
           }
 
-          const key = `${ride.anchorIndex}|${ride.tripNumber ?? "1"}`;
-          const previous = seenRides.get(key);
+const evidenceKey = [...ride.messageIndices]
+  .sort((a, b) => a - b)
+  .join(",");
+
+const key = `${ride.anchorIndex}|${ride.tripNumber ?? "1"}|${evidenceKey}`;          const previous = seenRides.get(key);
 
           if (!previous) {
             seenRides.set(key, ride);

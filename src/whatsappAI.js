@@ -253,16 +253,33 @@ const items = [
     ) {
       throw new Error("A IA atribuiu uma corrida fora do período selecionado.");
     }
-    const anchorKey = `${item.anchorIndex}|${item.tripNumber ?? "1"}`;
-    const duplicatedAnchor = seenAnchors.has(anchorKey);
-    seenAnchors.add(anchorKey);
-    const evidence = item.messageIndices.map(messageIndex => sourceByIndex.get(messageIndex));
-   const candidate = makeCandidate(item, sourceByIndex, driver, "openai");
-    if (duplicatedAnchor) {
-      candidate.confirmed = false;
-      candidate.analysisStatus = "pending";
-      candidate.reviewReason = "A mesma mensagem foi atribuída a mais de uma corrida pela IA.";
-    }
+const evidenceKey = [...item.messageIndices]
+  .sort((a, b) => a - b)
+  .join(",");
+
+const anchorKey =
+  `${item.anchorIndex}|${item.tripNumber ?? "1"}|${evidenceKey}`;
+
+const duplicatedAnchor = seenAnchors.has(anchorKey);
+seenAnchors.add(anchorKey);
+
+const evidence = item.messageIndices.map(
+  messageIndex => sourceByIndex.get(messageIndex),
+);
+
+const candidate = makeCandidate(
+  item,
+  sourceByIndex,
+  driver,
+  "openai",
+);
+
+if (duplicatedAnchor) {
+  candidate.confirmed = false;
+  candidate.analysisStatus = "pending";
+  candidate.reviewReason =
+"A mesma mensagem foi atribuída a mais de uma corrida pela IA.";}
+    
     if (candidate.amountCents !== null && !findFareEvidence(evidence, candidate.amountCents)) {
       candidate.confirmed = false;
       candidate.analysisStatus = "pending";
